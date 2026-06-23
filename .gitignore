@@ -1,2 +1,4 @@
 node_modules/
+web/node_modules/
+web/.next/
 plugo-stock-*.csv

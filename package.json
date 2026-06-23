@@ -1,0 +1,23 @@
+{
+  "name": "bot-plugo",
+  "version": "1.0.0",
+  "description": "Realtime stock monitoring CLI bot for Plugo-based streetwear stores",
+  "type": "module",
+  "bin": {
+    "plugo-bot": "./src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "chalk": "^5.3.0",
+    "cli-table3": "^0.6.3",
+    "commander": "^12.1.0",
+    "fast-csv": "^5.0.1",
+    "inquirer": "^9.3.7",
+    "ora": "^8.1.0",
+    "puppeteer": "^25.2.0"
+  }
+}

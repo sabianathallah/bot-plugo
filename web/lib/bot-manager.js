@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { detectPlugoEndpoint } from '../../src/detector.js';
+import { detectPlugoEndpoint, isCollectionUrl, scanCollectionPage } from '../../src/detector.js';
 import { StockPoller } from '../../src/poller.js';
 import {
   saveProduct, updateProductName, deleteProduct,
@@ -65,8 +65,12 @@ class BotManager extends EventEmitter {
       .map(([timestamp, variants]) => ({ timestamp, variants }));
   }
 
-  // ── Add a new product ──────────────────────────────────────────────────────
+  // ── Add a new product or collection URL ───────────────────────────────────
   async addProduct(productUrl) {
+    if (isCollectionUrl(productUrl)) {
+      return this._addCollection(productUrl);
+    }
+
     if (this.products.has(productUrl)) throw new Error('Already monitoring this URL');
 
     saveProduct(productUrl, null);
@@ -80,7 +84,38 @@ class BotManager extends EventEmitter {
       poller:      null,
     });
     this.emit('product:detecting', { productUrl });
-    return this._startMonitoring(productUrl);
+    this._startMonitoring(productUrl);
+    return { type: 'product' };
+  }
+
+  // ── Scan a collection page and add all products found ─────────────────────
+  async _addCollection(collectionUrl) {
+    this.emit('collection:scanning', { collectionUrl });
+
+    let productUrls;
+    try {
+      productUrls = await scanCollectionPage(collectionUrl);
+    } catch (err) {
+      this.emit('collection:error', { collectionUrl, error: err.message });
+      throw err;
+    }
+
+    if (productUrls.length === 0) {
+      const err = 'Tidak ada produk ditemukan di halaman ini';
+      this.emit('collection:error', { collectionUrl, error: err });
+      throw new Error(err);
+    }
+
+    this.emit('collection:found', { collectionUrl, count: productUrls.length });
+
+    // Fire-and-forget each product
+    for (const url of productUrls) {
+      if (!this.products.has(url)) {
+        this.addProduct(url).catch(() => {});
+      }
+    }
+
+    return { type: 'collection', count: productUrls.length };
   }
 
   // ── Core detection + polling setup ─────────────────────────────────────────

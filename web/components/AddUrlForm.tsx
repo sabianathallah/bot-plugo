@@ -8,10 +8,27 @@ interface Props {
   error?:  string;
 }
 
-const EXAMPLES = [
+const PRODUCT_EXAMPLES = [
   'https://www.broodis.com/products/835792/ziptee-polo-shirt-dark-tones',
-  'https://crsl-store.id/products/...',
+  'https://chambredelavain.com/products/123456/nama-produk',
 ];
+
+const COLLECTION_EXAMPLES = [
+  'https://chambredelavain.com/products',
+  'https://www.broodis.com/collections/all',
+];
+
+function detectType(url: string): 'collection' | 'product' {
+  try {
+    const path = new URL(url).pathname;
+    if (
+      /^\/products\/?$/.test(path) ||
+      /^\/collections\//.test(path) ||
+      (/^\/products\//.test(path) && !/^\/products\/\d+/.test(path))
+    ) return 'collection';
+  } catch {}
+  return 'product';
+}
 
 export function AddUrlForm({ onAdd, onClose, error }: Props) {
   const [url,     setUrl]     = useState('');
@@ -19,6 +36,9 @@ export function AddUrlForm({ onAdd, onClose, error }: Props) {
   const inputRef              = useRef<HTMLInputElement>(null);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
+
+  const urlType  = url.trim() ? detectType(url.trim()) : 'product';
+  const isCollection = urlType === 'collection';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,21 +51,22 @@ export function AddUrlForm({ onAdd, onClose, error }: Props) {
     }
   };
 
+  const loadingLabel  = isCollection ? 'SCANNING…' : 'DETECTING…';
+  const submitLabel   = isCollection ? 'SCAN ALL PRODUCTS' : 'START MONITOR';
+
   return (
-    /* Backdrop */
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="w-full max-w-lg rounded-lg border border-[#2A2A2A] bg-[#0E0E0E] overflow-hidden shadow-2xl">
 
-        {/* Modal header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-[#1E1E1E]">
           <span
             className="text-[20px] tracking-wider text-white"
             style={{ fontFamily: 'var(--font-bebas)' }}
           >
-            ADD PRODUCT URL
+            {isCollection ? 'SCAN COLLECTION' : 'ADD PRODUCT URL'}
           </span>
           <button onClick={onClose} className="text-[#444] hover:text-white text-xl transition-colors">×</button>
         </div>
@@ -56,18 +77,28 @@ export function AddUrlForm({ onAdd, onClose, error }: Props) {
               className="block text-[10px] tracking-widest text-[#555] mb-2"
               style={{ fontFamily: 'var(--font-jetbrains)' }}
             >
-              PLUGO PRODUCT PAGE URL
+              {isCollection ? 'PLUGO COLLECTION / PRODUCTS PAGE URL' : 'PLUGO PRODUCT PAGE URL'}
             </label>
             <input
               ref={inputRef}
               type="url"
               value={url}
               onChange={e => setUrl(e.target.value)}
-              placeholder="https://store.plugo.co/products/..."
+              placeholder="https://store.com/products/... atau /products"
               className="w-full bg-[#151515] border border-[#222] rounded px-3 py-2.5 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#C8FF00] transition-colors"
               style={{ fontFamily: 'var(--font-jetbrains)' }}
             />
           </div>
+
+          {/* Collection hint */}
+          {isCollection && (
+            <div className="flex items-start gap-2 px-3 py-2 rounded bg-[#C8FF00]/5 border border-[#C8FF00]/20">
+              <span className="text-[#C8FF00] text-[10px] mt-0.5">→</span>
+              <p className="text-[10px] text-[#C8FF00]/70 leading-relaxed" style={{ fontFamily: 'var(--font-jetbrains)' }}>
+                Halaman koleksi terdeteksi — semua produk di halaman ini akan dimonitor otomatis
+              </p>
+            </div>
+          )}
 
           {/* Error */}
           {error && (
@@ -79,9 +110,9 @@ export function AddUrlForm({ onAdd, onClose, error }: Props) {
           {/* Examples */}
           <div>
             <p className="text-[10px] text-[#333] mb-2 tracking-widest" style={{ fontFamily: 'var(--font-jetbrains)' }}>
-              EXAMPLES
+              {isCollection ? 'CONTOH COLLECTION URL' : 'CONTOH PRODUCT URL'}
             </p>
-            {EXAMPLES.map(ex => (
+            {(isCollection ? COLLECTION_EXAMPLES : PRODUCT_EXAMPLES).map(ex => (
               <button
                 key={ex}
                 type="button"
@@ -94,7 +125,6 @@ export function AddUrlForm({ onAdd, onClose, error }: Props) {
             ))}
           </div>
 
-          {/* Actions */}
           <div className="flex gap-3 pt-1">
             <button
               type="button"
@@ -110,7 +140,7 @@ export function AddUrlForm({ onAdd, onClose, error }: Props) {
               className="flex-1 py-2.5 rounded bg-[#C8FF00] text-black text-sm font-bold tracking-widest disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white transition-colors"
               style={{ fontFamily: 'var(--font-jetbrains)' }}
             >
-              {loading ? 'DETECTING…' : 'START MONITOR'}
+              {loading ? loadingLabel : submitLabel}
             </button>
           </div>
         </form>

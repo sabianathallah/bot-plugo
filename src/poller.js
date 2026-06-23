@@ -57,7 +57,7 @@ export class StockPoller extends EventEmitter {
       this.errorCount = 0;
       this.lastPoll = new Date();
 
-      const fresh = parseStockData(res.data);
+      const fresh = parseStockData(res.data, this.productUrl);
       if (!fresh || fresh.variants.length === 0) {
         this.emit('error', {
           productUrl: this.productUrl,

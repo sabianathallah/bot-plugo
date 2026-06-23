@@ -40,80 +40,130 @@ async function fetchPlugoPayload(productUrl) {
 /**
  * Decode the Nuxt 3 devalue payload array into variant stock data.
  *
- * Plugo encodes each variant as a sequence in the flat array:
- *   ..., "SIZE_LABEL", [ref], {"quantity": qRef}, <stockNumber>, ...
+ * Strategy: scan for all {"quantity": N} objects (skipping cart-state ones
+ * that also have a "variation" key), then scan backward from each to find
+ * the nearest string that looks like a variant label.
  *
- * When {"quantity": N} appears:
- *   - if payload[N] is a number  → stock = payload[N]
- *   - if {"quantity": N} is the literal object and the NEXT raw number in
- *     the array at that index position is inline → we fall back to scanning
- *
- * We also extract the product name from a nearby "Ziptee Polo…"-like string.
+ * This handles both standard size labels (S/M/L/XL) and store-specific
+ * product codes (e.g. "CH366") used by some Plugo stores.
  */
-function decodePlugoPayload(payload) {
-  const SIZE_RE = /^(XS|S|M|L|XL|2?XXL|XXXL|3XL|ONE SIZE|FREE SIZE|[0-9]{2,3})$/i;
-  // Plugo product name pattern: large integer (product ID) followed immediately by the name string
-  // e.g. payload[i] = 835792, payload[i+1] = "Ziptee Polo Shirt Dark Tones", payload[i+2] = "normal"
-  const SKIP_STRINGS = new Set(['normal', 'unavailable', 'available', 'Ukuran', 'Warna', 'desc', 'asc']);
+function decodePlugoPayload(payload, productUrl) {
+  const SKIP_STRINGS = new Set([
+    'normal', 'unavailable', 'available', 'Ukuran', 'Warna', 'desc', 'asc',
+    'mobile', 'desktop', 'tablet', 'id', 'success', 'error', 'loading',
+    'true', 'false', 'null',
+  ]);
 
   const variants = [];
   let productName = 'Unknown Product';
 
-  // First pass: find product name (integer > 100000 followed by a title-like string)
+  // --- Product name ---
+  // Find integer product ID (100k–10M) followed by a readable name string.
+  // If the next string looks like a SKU code (e.g. "CH366"), skip it and
+  // fall back to deriving the name from the product URL slug.
   for (let i = 0; i < payload.length - 1; i++) {
-    const el = payload[i];
+    const el   = payload[i];
     const next = payload[i + 1];
     if (
-      typeof el === 'number' &&
-      el > 100_000 &&
-      el < 10_000_000 && // exclude timestamps (13 digits) and option IDs (> 10M)
-      typeof next === 'string' &&
-      next.length > 3 &&
-      next.length < 150 &&
-      !next.startsWith('http') &&
-      !next.startsWith('<') &&
-      /[a-zA-Z]/.test(next) &&
-      !SKIP_STRINGS.has(next)
+      typeof el === 'number' && el > 100_000 && el < 10_000_000 &&
+      typeof next === 'string' && next.length > 3 && next.length < 150 &&
+      !next.startsWith('http') && !next.startsWith('<') &&
+      /[a-zA-Z]/.test(next) && !SKIP_STRINGS.has(next)
     ) {
-      productName = next;
-      break;
+      // Skip short all-caps SKU codes like "CH366", "BRD001"
+      const isSKU = next.length <= 10 && !/\s/.test(next) && /^[A-Z]{1,5}\d+$/i.test(next);
+      if (!isSKU) {
+        productName = next;
+        break;
+      }
     }
   }
 
-  // Second pass: extract size variants
+  // Fallback: extract readable name from URL slug
+  if (productName === 'Unknown Product' && productUrl) {
+    try {
+      const path  = new URL(productUrl).pathname;
+      const match = path.match(/\/products\/\d+\/(.+)/);
+      if (match) {
+        productName = match[1]
+          .replace(/-__-/g, ' – ')
+          .replace(/-/g, ' ')
+          .replace(/\b\w/g, c => c.toUpperCase());
+      }
+    } catch { /* ignore */ }
+  }
+
+  // --- Variants: backward scan from each {"quantity": N} object ---
+  // Objects that also have "variation" key are cart-selection state, not product variants.
   for (let i = 0; i < payload.length; i++) {
     const el = payload[i];
+    if (!el || typeof el !== 'object' || Array.isArray(el)) continue;
+    if (!('quantity' in el) || 'variation' in el) continue;
 
-    if (typeof el !== 'string' || !SIZE_RE.test(el.trim())) continue;
+    const qRef = el.quantity;
+    if (typeof qRef !== 'number') continue;
+    const stock = payload[qRef];
+    if (typeof stock !== 'number') continue;
 
-
-    const label = el.trim().toUpperCase();
-
-    // Look forward for {"quantity": refOrNumber}
-    for (let j = i + 1; j < Math.min(i + 6, payload.length); j++) {
+    // Scan backward up to 8 positions for the nearest usable label string
+    for (let j = i - 1; j >= Math.max(0, i - 8); j--) {
       const candidate = payload[j];
       if (
-        candidate &&
-        typeof candidate === 'object' &&
-        !Array.isArray(candidate) &&
-        'quantity' in candidate
+        typeof candidate === 'string' &&
+        candidate.length >= 1 && candidate.length <= 50 &&
+        !candidate.startsWith('<') && !candidate.startsWith('http') &&
+        !/^\s*$/.test(candidate) && !SKIP_STRINGS.has(candidate)
       ) {
-        const qRef = candidate.quantity;
-        let stock = 0;
-
-        if (typeof qRef === 'number') {
-          // qRef is an index into payload
-          const resolved = payload[qRef];
-          stock = typeof resolved === 'number' ? resolved : 0;
+        const label = candidate.trim().toUpperCase();
+        if (!variants.find(v => v.label === label)) {
+          variants.push({ label, stock });
         }
-
-        variants.push({ label, stock });
         break;
       }
     }
   }
 
   return { productName, variants };
+}
+
+/**
+ * Returns true if the URL is a collection/listing page, not a single product.
+ * Product URLs contain a numeric ID segment: /products/835792/slug
+ */
+export function isCollectionUrl(url) {
+  const path = new URL(url).pathname;
+  return (
+    /^\/products\/?$/.test(path) ||
+    /^\/collections\//.test(path) ||
+    (/^\/products\//.test(path) && !/^\/products\/\d+/.test(path))
+  );
+}
+
+/**
+ * Fetch a collection/listing page and return all unique product URLs found.
+ * Looks for href="/products/{id}/{slug}" patterns in HTML.
+ */
+export async function scanCollectionPage(collectionUrl) {
+  const res = await axios.get(collectionUrl, {
+    timeout: 15_000,
+    headers: BROWSER_HEADERS,
+    responseType: 'text',
+  });
+
+  const html = res.data;
+  if (!html.includes('plugo.world') && !html.includes('plugo.co')) {
+    throw new Error('Bukan Plugo store');
+  }
+
+  const base = new URL(collectionUrl);
+  const productRe = /href="(\/products\/\d+\/[^"?#\s]+)"/g;
+  const found = new Set();
+
+  for (const [, path] of html.matchAll(productRe)) {
+    found.add(`${base.protocol}//${base.host}${path}`);
+  }
+
+  return [...found];
 }
 
 /**
@@ -138,7 +188,7 @@ export async function detectPlugoEndpoint(productUrl, log) {
 
   log(`  SSR payload found (${payload.length} elements)`);
 
-  const initial = decodePlugoPayload(payload);
+  const initial = decodePlugoPayload(payload, productUrl);
   log(`  Product: ${initial.productName}`);
   log(`  Variants: ${initial.variants.map(v => `${v.label}=${v.stock}`).join(', ')}`);
 
@@ -149,12 +199,12 @@ export async function detectPlugoEndpoint(productUrl, log) {
 /**
  * Parse stock data from a fresh HTML fetch (used by the poller).
  */
-export function parseStockData(html) {
+export function parseStockData(html, productUrl) {
   for (const [, content] of html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/gi)) {
     if (content.includes('ShallowReactive') && content.length > 5_000) {
       try {
         const payload = JSON.parse(content);
-        return decodePlugoPayload(payload);
+        return decodePlugoPayload(payload, productUrl);
       } catch {
         return null;
       }

@@ -13,8 +13,8 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    botManager.addProduct(url); // fire-and-forget, WS pushes progress
-    return NextResponse.json({ ok: true });
+    const result = await botManager.addProduct(url);
+    return NextResponse.json({ ok: true, ...result });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json({ error: msg }, { status: 409 });

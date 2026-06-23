@@ -4,12 +4,21 @@ import { useState, useRef, useEffect } from 'react';
 import type { Project, Source } from '@/lib/ws-hook';
 import { ProductCard } from './ProductCard';
 
+const INTERVAL_OPTIONS = [
+  { label: '5s',  ms: 5_000  },
+  { label: '10s', ms: 10_000 },
+  { label: '30s', ms: 30_000 },
+  { label: '1m',  ms: 60_000 },
+  { label: '5m',  ms: 300_000 },
+];
+
 interface Props {
-  project:       Project;
-  onRemove:      (projectId: number) => void;
+  project:         Project;
+  onRemove:        (projectId: number) => void;
   onRemoveProduct: (productUrl: string) => void;
-  onRename:      (projectId: number, name: string) => void;
-  onAddSource:   (projectId: number, url: string) => Promise<void>;
+  onRename:        (projectId: number, name: string) => void;
+  onAddSource:     (projectId: number, url: string) => Promise<void>;
+  onSetInterval:   (projectId: number, intervalMs: number) => void;
 }
 
 function sourceStatus(sources: Source[]) {
@@ -18,7 +27,7 @@ function sourceStatus(sources: Source[]) {
   return 'watching';
 }
 
-export function ProjectCard({ project, onRemove, onRemoveProduct, onRename, onAddSource }: Props) {
+export function ProjectCard({ project, onRemove, onRemoveProduct, onRename, onAddSource, onSetInterval }: Props) {
   const [expanded,     setExpanded]     = useState(true);
   const [renaming,     setRenaming]     = useState(false);
   const [nameVal,      setNameVal]      = useState(project.name);
@@ -97,6 +106,19 @@ export function ProjectCard({ project, onRemove, onRemoveProduct, onRename, onAd
             {errorProducts.length > 0 && <span className="text-[#FF9500]">{errorProducts.length} ERR</span>}
           </div>
         )}
+
+        {/* Interval selector */}
+        <select
+          value={project.intervalMs}
+          onChange={e => onSetInterval(project.id, Number(e.target.value))}
+          className="text-[9px] bg-[#111] border border-[#1E1E1E] text-[#444] rounded px-1.5 py-1 hover:border-[#333] hover:text-[#888] transition-colors cursor-pointer outline-none"
+          style={{ fontFamily: 'var(--font-jetbrains)' }}
+          title="Poll interval"
+        >
+          {INTERVAL_OPTIONS.map(o => (
+            <option key={o.ms} value={o.ms}>{o.label}</option>
+          ))}
+        </select>
 
         {/* Add source URL */}
         <button

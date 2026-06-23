@@ -40,6 +40,14 @@ export class StockPoller extends EventEmitter {
     }
   }
 
+  setIntervalMs(ms) {
+    this.intervalMs = ms;
+    if (this.running) {
+      clearTimeout(this.timer);
+      this._scheduleNext();
+    }
+  }
+
   _scheduleNext() {
     if (!this.running) return;
     this.timer = setTimeout(() => this._poll(), this.intervalMs);

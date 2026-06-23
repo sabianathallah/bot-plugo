@@ -64,6 +64,14 @@ export function Dashboard() {
     });
   };
 
+  const handleSetInterval = async (projectId: number, intervalMs: number) => {
+    await fetch('/api/projects', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, intervalMs }),
+    });
+  };
+
   const handleAddSource = async (projectId: number, url: string) => {
     const res = await fetch('/api/projects', {
       method: 'POST',
@@ -178,22 +186,22 @@ export function Dashboard() {
                   onRemoveProduct={handleRemoveProduct}
                   onRename={handleRename}
                   onAddSource={handleAddSource}
+                  onSetInterval={handleSetInterval}
                 />
               ))}
             </div>
 
-            {/* Activity feed sidebar */}
-            {activities.length > 0 && (
-              <div className="hidden lg:block w-72 shrink-0">
-                <ActivityFeed activities={activities} />
-              </div>
-            )}
+            {/* Activity feed — always visible on wide screens */}
+            <div className="hidden lg:block w-72 shrink-0">
+              <ActivityFeed activities={activities} projects={projects} />
+            </div>
           </div>
         )}
 
-        {activities.length > 0 && (
+        {/* Activity feed below on narrow screens */}
+        {!isEmpty && (
           <div className="lg:hidden mt-6">
-            <ActivityFeed activities={activities} />
+            <ActivityFeed activities={activities} projects={projects} />
           </div>
         )}
       </main>

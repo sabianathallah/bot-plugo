@@ -16,6 +16,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS projects (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     name         TEXT    NOT NULL,
+    interval_ms  INTEGER NOT NULL DEFAULT 5000,
     created_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   );
 
@@ -58,11 +59,15 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_chg_product_time  ON change_events(product_id, occurred_at);
 `);
 
-// Add project_id to products if it doesn't exist yet (safe migration)
+// Safe column migrations
 const productCols = db.pragma('table_info(products)').map((c) => c.name);
 if (!productCols.includes('project_id')) {
   db.exec(`ALTER TABLE products ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_products_project ON products(project_id)`);
+}
+const projectCols = db.pragma('table_info(projects)').map((c) => c.name);
+if (!projectCols.includes('interval_ms')) {
+  db.exec(`ALTER TABLE projects ADD COLUMN interval_ms INTEGER NOT NULL DEFAULT 5000`);
 }
 
 // ── Migrate existing products without project_id into per-domain projects ───
@@ -103,11 +108,12 @@ if (!productCols.includes('project_id')) {
 // ── Prepared statements ──────────────────────────────────────────────────────
 const stmts = {
   // projects
-  insertProject:  db.prepare(`INSERT INTO projects (name) VALUES (?) RETURNING id, name, created_at`),
-  renameProject:  db.prepare(`UPDATE projects SET name = ? WHERE id = ?`),
-  deleteProject:  db.prepare(`DELETE FROM projects WHERE id = ?`),
-  getAllProjects:  db.prepare(`SELECT id, name, created_at FROM projects ORDER BY created_at`),
-  getProjectById: db.prepare(`SELECT id, name, created_at FROM projects WHERE id = ?`),
+  insertProject:       db.prepare(`INSERT INTO projects (name) VALUES (?) RETURNING id, name, interval_ms, created_at`),
+  renameProject:       db.prepare(`UPDATE projects SET name = ? WHERE id = ?`),
+  setProjectInterval:  db.prepare(`UPDATE projects SET interval_ms = ? WHERE id = ?`),
+  deleteProject:       db.prepare(`DELETE FROM projects WHERE id = ?`),
+  getAllProjects:       db.prepare(`SELECT id, name, interval_ms, created_at FROM projects ORDER BY created_at`),
+  getProjectById:      db.prepare(`SELECT id, name, interval_ms, created_at FROM projects WHERE id = ?`),
 
   // project sources (collection URLs)
   upsertSource:      db.prepare(`
@@ -183,6 +189,9 @@ export function createProject(name) {
 }
 export function renameProject(id, name) {
   stmts.renameProject.run(name, id);
+}
+export function setProjectIntervalMs(id, intervalMs) {
+  stmts.setProjectInterval.run(intervalMs, id);
 }
 export function deleteProject(id) {
   stmts.deleteProject.run(id);

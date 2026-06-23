@@ -22,10 +22,11 @@ export type Source = {
 };
 
 export type Project = {
-  id:       number;
-  name:     string;
-  sources:  Source[];
-  products: Product[];
+  id:         number;
+  name:       string;
+  intervalMs: number;
+  sources:    Source[];
+  products:   Product[];
 };
 
 export type ToastKind = 'restock' | 'soldout' | 'info' | 'error';

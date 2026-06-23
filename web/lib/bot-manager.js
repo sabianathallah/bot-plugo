@@ -3,6 +3,7 @@ import { detectPlugoEndpoint, isCollectionUrl, scanCollectionPage } from '../../
 import { StockPoller } from '../../src/poller.js';
 import {
   createProject, renameProject as dbRenameProject, deleteProject as dbDeleteProject,
+  setProjectIntervalMs as dbSetInterval,
   getAllProjects, getProjectById, getProductsByProject,
   upsertSource, updateSourceStatus, getSourcesByProject, getAllSources, deleteSource,
   saveProduct, updateProductName, deleteProduct,
@@ -16,7 +17,7 @@ class BotManager extends EventEmitter {
     super();
     this.setMaxListeners(100);
 
-    // projectId → { id, name, sources: [{url, status}], products: Map<url, ProductEntry> }
+    // projectId → { id, name, intervalMs, sources: [{url, status}], products: Map<url, ProductEntry> }
     this.projects = new Map();
 
     // flat url → projectId (for quick lookup)
@@ -30,10 +31,11 @@ class BotManager extends EventEmitter {
   getState() {
     return {
       projects: [...this.projects.values()].map(p => ({
-        id:       p.id,
-        name:     p.name,
-        sources:  p.sources,
-        products: [...p.products.entries()].map(([url, e]) => ({
+        id:         p.id,
+        name:       p.name,
+        intervalMs: p.intervalMs,
+        sources:    p.sources,
+        products:   [...p.products.entries()].map(([url, e]) => ({
           productUrl:  url,
           productName: e.productName,
           variants:    e.variants,
@@ -53,7 +55,7 @@ class BotManager extends EventEmitter {
     console.log(`[bot] Resuming ${dbProjects.length} project(s) from DB…`);
 
     for (const dbProject of dbProjects) {
-      const project = this._initProject(dbProject.id, dbProject.name);
+      const project = this._initProject(dbProject.id, dbProject.name, dbProject.interval_ms ?? 5000);
 
       const sources  = getSourcesByProject(dbProject.id);
       const products = getProductsByProject(dbProject.id);
@@ -100,7 +102,7 @@ class BotManager extends EventEmitter {
 
       const dbProject = createProject(name);
       projectId = dbProject.id;
-      project   = this._initProject(projectId, name);
+      project   = this._initProject(projectId, name, dbProject.interval_ms ?? 5000);
       this.emit('project:added', { id: projectId, name, sources: [], products: [] });
     }
 
@@ -208,7 +210,8 @@ class BotManager extends EventEmitter {
         history:     entry.history,
       });
 
-      const poller = new StockPoller({ productUrl, apiUrl, initial, intervalMs: 5000 });
+      const intervalMs = this.projects.get(projectId)?.intervalMs ?? 5000;
+      const poller = new StockPoller({ productUrl, apiUrl, initial, intervalMs });
 
       poller.on('update', ({ data, changes, timestamp }) => {
         const proj = this.projects.get(projectId);
@@ -246,6 +249,18 @@ class BotManager extends EventEmitter {
   }
 
   // ── Project management ────────────────────────────────────────────────────
+  setProjectInterval(projectId, intervalMs) {
+    const project = this.projects.get(projectId);
+    if (!project) throw new Error('Project not found');
+    dbSetInterval(projectId, intervalMs);
+    project.intervalMs = intervalMs;
+    // Apply to all running pollers immediately
+    for (const entry of project.products.values()) {
+      entry.poller?.setIntervalMs(intervalMs);
+    }
+    this.emit('project:updated', this._serializeProject(project));
+  }
+
   renameProject(projectId, name) {
     const project = this.projects.get(projectId);
     if (!project) throw new Error('Project not found');
@@ -295,8 +310,8 @@ class BotManager extends EventEmitter {
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
-  _initProject(id, name) {
-    const project = { id, name, sources: [], products: new Map() };
+  _initProject(id, name, intervalMs = 5000) {
+    const project = { id, name, intervalMs, sources: [], products: new Map() };
     this.projects.set(id, project);
     return project;
   }
@@ -326,9 +341,10 @@ class BotManager extends EventEmitter {
 
   _serializeProject(project) {
     return {
-      id:       project.id,
-      name:     project.name,
-      sources:  project.sources,
+      id:         project.id,
+      name:       project.name,
+      intervalMs: project.intervalMs,
+      sources:    project.sources,
       products: [...project.products.entries()].map(([url, e]) => ({
         productUrl:  url,
         productName: e.productName,

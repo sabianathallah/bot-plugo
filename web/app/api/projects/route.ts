@@ -38,14 +38,14 @@ export async function DELETE(req: NextRequest) {
   return NextResponse.json({ error: 'Missing projectId or productUrl' }, { status: 400 });
 }
 
-// PATCH /api/projects — rename a project
+// PATCH /api/projects — rename a project or set interval
 export async function PATCH(req: NextRequest) {
-  const { projectId, name } = await req.json().catch(() => ({}));
-  if (!projectId || !name) {
-    return NextResponse.json({ error: 'Missing projectId or name' }, { status: 400 });
-  }
+  const { projectId, name, intervalMs } = await req.json().catch(() => ({}));
+  if (!projectId) return NextResponse.json({ error: 'Missing projectId' }, { status: 400 });
+
   try {
-    botManager.renameProject(Number(projectId), name);
+    if (name)       botManager.renameProject(Number(projectId), name);
+    if (intervalMs) botManager.setProjectInterval(Number(projectId), Number(intervalMs));
     return NextResponse.json({ ok: true });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';

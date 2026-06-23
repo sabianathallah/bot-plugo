@@ -66,7 +66,7 @@ export function AddUrlForm({ onAdd, onClose, error }: Props) {
             className="text-[20px] tracking-wider text-white"
             style={{ fontFamily: 'var(--font-bebas)' }}
           >
-            {isCollection ? 'SCAN COLLECTION' : 'ADD PRODUCT URL'}
+            ADD PROJECT
           </span>
           <button onClick={onClose} className="text-[#444] hover:text-white text-xl transition-colors">×</button>
         </div>
@@ -77,7 +77,7 @@ export function AddUrlForm({ onAdd, onClose, error }: Props) {
               className="block text-[10px] tracking-widest text-[#555] mb-2"
               style={{ fontFamily: 'var(--font-jetbrains)' }}
             >
-              {isCollection ? 'PLUGO COLLECTION / PRODUCTS PAGE URL' : 'PLUGO PRODUCT PAGE URL'}
+              COLLECTION URL (e.g. /products atau /collections/...)
             </label>
             <input
               ref={inputRef}

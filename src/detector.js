@@ -140,8 +140,22 @@ export function isCollectionUrl(url) {
 }
 
 /**
- * Fetch a collection/listing page and return all unique product URLs found.
- * Looks for href="/products/{id}/{slug}" patterns in HTML.
+ * Extract vendor ID from a Plugo store page HTML.
+ * The vendor ID appears in URLs like /v1/shop/3899/manifest
+ */
+function extractVendorId(html) {
+  const m = html.match(/\/shop\/(\d+)\//);
+  return m ? m[1] : null;
+}
+
+/**
+ * Fetch a collection/listing page and return ALL unique product URLs.
+ *
+ * Strategy:
+ * 1. Fetch collection HTML → extract vendor ID
+ * 2. Call api.plugo.world/v1/shop/{vendorId}/products → full product list
+ * 3. Construct /products/{id} URLs (slug not required for Plugo)
+ * 4. Fall back to parsing href="/products/{id}/..." from HTML (first page only)
  */
 export async function scanCollectionPage(collectionUrl) {
   const res = await axios.get(collectionUrl, {
@@ -155,14 +169,28 @@ export async function scanCollectionPage(collectionUrl) {
     throw new Error('Bukan Plugo store');
   }
 
-  const base = new URL(collectionUrl);
-  const productRe = /href="(\/products\/\d+\/[^"?#\s]+)"/g;
-  const found = new Set();
+  const base      = new URL(collectionUrl);
+  const vendorId  = extractVendorId(html);
 
-  for (const [, path] of html.matchAll(productRe)) {
-    found.add(`${base.protocol}//${base.host}${path}`);
+  // Try the Plugo products API for full product list (all pages)
+  if (vendorId) {
+    try {
+      const apiRes = await axios.get(
+        `https://api.plugo.world/v1/shop/${vendorId}/products`,
+        { timeout: 10_000, headers: { 'User-Agent': BROWSER_HEADERS['User-Agent'] } }
+      );
+      const products = apiRes.data?.data ?? apiRes.data;
+      if (Array.isArray(products) && products.length > 0) {
+        return products.map(p => `${base.protocol}//${base.host}/products/${p.id}`);
+      }
+    } catch { /* fall through to HTML scrape */ }
   }
 
+  // Fallback: extract hrefs from HTML (first page only)
+  const found = new Set();
+  for (const [, path] of html.matchAll(/href="(\/products\/\d+\/[^"?#\s]+)"/g)) {
+    found.add(`${base.protocol}//${base.host}${path}`);
+  }
   return [...found];
 }
 

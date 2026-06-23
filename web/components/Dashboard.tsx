@@ -84,6 +84,17 @@ export function Dashboard() {
     }
   };
 
+  const handleRescan = async (projectId: number, sourceUrl: string): Promise<{added: number}> => {
+    const res = await fetch('/api/projects', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, rescanUrl: sourceUrl }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error ?? 'Failed');
+    return { added: json.added ?? 0 };
+  };
+
   return (
     <div className="min-h-dvh flex flex-col">
 
@@ -187,6 +198,7 @@ export function Dashboard() {
                   onRename={handleRename}
                   onAddSource={handleAddSource}
                   onSetInterval={handleSetInterval}
+                  onRescan={handleRescan}
                 />
               ))}
             </div>

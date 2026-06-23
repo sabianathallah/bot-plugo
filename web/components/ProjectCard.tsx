@@ -19,6 +19,7 @@ interface Props {
   onRename:        (projectId: number, name: string) => void;
   onAddSource:     (projectId: number, url: string) => Promise<void>;
   onSetInterval:   (projectId: number, intervalMs: number) => void;
+  onRescan:        (projectId: number, sourceUrl: string) => Promise<{added: number}>;
 }
 
 function sourceStatus(sources: Source[]) {
@@ -27,13 +28,15 @@ function sourceStatus(sources: Source[]) {
   return 'watching';
 }
 
-export function ProjectCard({ project, onRemove, onRemoveProduct, onRename, onAddSource, onSetInterval }: Props) {
-  const [expanded,     setExpanded]     = useState(true);
-  const [renaming,     setRenaming]     = useState(false);
-  const [nameVal,      setNameVal]      = useState(project.name);
-  const [addingUrl,    setAddingUrl]    = useState(false);
-  const [newUrl,       setNewUrl]       = useState('');
+export function ProjectCard({ project, onRemove, onRemoveProduct, onRename, onAddSource, onSetInterval, onRescan }: Props) {
+  const [expanded,      setExpanded]      = useState(true);
+  const [renaming,      setRenaming]      = useState(false);
+  const [nameVal,       setNameVal]       = useState(project.name);
+  const [addingUrl,     setAddingUrl]     = useState(false);
+  const [newUrl,        setNewUrl]        = useState('');
   const [addingLoading, setAddingLoading] = useState(false);
+  const [rescanning,    setRescanning]    = useState<string | null>(null); // url being rescanned
+  const [rescanMsg,     setRescanMsg]     = useState<string | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { if (renaming) nameRef.current?.focus(); }, [renaming]);
@@ -57,6 +60,21 @@ export function ProjectCard({ project, onRemove, onRemoveProduct, onRename, onAd
     setAddingLoading(true);
     try { await onAddSource(project.id, newUrl.trim()); setNewUrl(''); setAddingUrl(false); }
     finally { setAddingLoading(false); }
+  };
+
+  const handleRescan = async (srcUrl: string) => {
+    setRescanning(srcUrl);
+    setRescanMsg(null);
+    try {
+      const r = await onRescan(project.id, srcUrl);
+      setRescanMsg(`+${r.added} produk baru`);
+      setTimeout(() => setRescanMsg(null), 4000);
+    } catch {
+      setRescanMsg('Gagal rescan');
+      setTimeout(() => setRescanMsg(null), 3000);
+    } finally {
+      setRescanning(null);
+    }
   };
 
   return (
@@ -165,20 +183,35 @@ export function ProjectCard({ project, onRemove, onRemoveProduct, onRename, onAd
 
       {/* ── Source URLs list ── */}
       {expanded && project.sources.length > 0 && (
-        <div className="flex flex-wrap gap-2 px-4 py-2 border-b border-[#111]">
+        <div className="flex flex-wrap gap-2 px-4 py-2 border-b border-[#111] items-center">
           {project.sources.map(src => (
-            <span
-              key={src.url}
-              className={`text-[9px] px-2 py-0.5 rounded border ${
-                src.status === 'active'
-                  ? 'border-[#C8FF00]/20 text-[#C8FF00]/60'
-                  : 'border-[#2A2A2A] text-[#333]'
-              }`}
-              style={{ fontFamily: 'var(--font-jetbrains)' }}
-            >
-              {src.status === 'watching' ? '⏳ ' : '● '}{new URL(src.url).pathname}
-            </span>
+            <div key={src.url} className="flex items-center gap-1">
+              <span
+                className={`text-[9px] px-2 py-0.5 rounded border ${
+                  src.status === 'active'
+                    ? 'border-[#C8FF00]/20 text-[#C8FF00]/60'
+                    : 'border-[#2A2A2A] text-[#333]'
+                }`}
+                style={{ fontFamily: 'var(--font-jetbrains)' }}
+              >
+                {src.status === 'watching' ? '⏳ ' : '● '}{new URL(src.url).pathname}
+              </span>
+              <button
+                onClick={() => handleRescan(src.url)}
+                disabled={rescanning === src.url}
+                title="Re-scan untuk produk baru"
+                className="text-[9px] px-1.5 py-0.5 rounded border border-[#1E1E1E] text-[#333] hover:text-[#C8FF00] hover:border-[#C8FF00]/30 transition-colors disabled:opacity-40"
+                style={{ fontFamily: 'var(--font-jetbrains)' }}
+              >
+                {rescanning === src.url ? '…' : '↻'}
+              </button>
+            </div>
           ))}
+          {rescanMsg && (
+            <span className="text-[9px] text-[#C8FF00]" style={{ fontFamily: 'var(--font-jetbrains)' }}>
+              {rescanMsg}
+            </span>
+          )}
         </div>
       )}
 

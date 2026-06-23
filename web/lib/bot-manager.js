@@ -94,16 +94,26 @@ class BotManager extends EventEmitter {
     if (projectId && this.projects.has(projectId)) {
       project = this.projects.get(projectId);
     } else {
-      // Auto-create project from domain
+      // Check if a project for this domain already exists
       const host = new URL(url).hostname.replace(/^www\./, '');
-      const name = host.split('.')[0]
-        .replace(/-/g, ' ')
-        .replace(/\b\w/g, c => c.toUpperCase());
+      const existing = [...this.projects.values()].find(p =>
+        p.sources.some(s => new URL(s.url).hostname.replace(/^www\./, '') === host)
+      );
 
-      const dbProject = createProject(name);
-      projectId = dbProject.id;
-      project   = this._initProject(projectId, name, dbProject.interval_ms ?? 5000);
-      this.emit('project:added', { id: projectId, name, sources: [], products: [] });
+      if (existing) {
+        project   = existing;
+        projectId = existing.id;
+      } else {
+        // Auto-create project from domain
+        const name = host.split('.')[0]
+          .replace(/-/g, ' ')
+          .replace(/\b\w/g, c => c.toUpperCase());
+
+        const dbProject = createProject(name);
+        projectId = dbProject.id;
+        project   = this._initProject(projectId, name, dbProject.interval_ms ?? 5000);
+        this.emit('project:added', { id: projectId, name, sources: [], products: [] });
+      }
     }
 
     // Register source
@@ -156,6 +166,15 @@ class BotManager extends EventEmitter {
       }
     }
     return added;
+  }
+
+  // ── Re-scan a source URL and add any new products found ──────────────────
+  async rescanSource(projectId, collectionUrl) {
+    const project = this.projects.get(projectId);
+    if (!project) throw new Error('Project not found');
+    const added = await this._scanAndAdd(collectionUrl, projectId, project);
+    this.emit('project:updated', this._serializeProject(project));
+    return { added };
   }
 
   // ── Pre-drop watcher — poll collection URL every 30s until products appear─

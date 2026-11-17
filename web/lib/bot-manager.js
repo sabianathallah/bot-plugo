@@ -10,7 +10,8 @@ import {
   getAllProducts, saveSnapshot, saveChanges, getHistory, getExportData,
 } from './db.js';
 
-const WATCHER_INTERVAL_MS = 30_000; // poll collection page every 30s pre-drop
+// Poll collection for NEW products (drops). Override with WATCHER_INTERVAL_MS env.
+const WATCHER_INTERVAL_MS = parseInt(process.env.WATCHER_INTERVAL_MS ?? '5000', 10);
 
 class BotManager extends EventEmitter {
   constructor() {
@@ -74,11 +75,9 @@ class BotManager extends EventEmitter {
       }
       await Promise.allSettled(monitoringPromises);
 
-      // Resume watchers for sources still in 'watching' state
+      // Always watch every source for newly launched products
       for (const src of sources) {
-        if (src.status === 'watching') {
-          this._startWatcher(src.url, dbProject.id);
-        }
+        this._startWatcher(src.url, dbProject.id);
       }
     }
   }
@@ -126,10 +125,8 @@ class BotManager extends EventEmitter {
     // Try scanning now
     const found = await this._scanAndAdd(url, projectId, project);
 
-    if (found === 0) {
-      // No products yet — start pre-drop watcher
-      this._startWatcher(url, projectId);
-    }
+    // Always keep watching for new products (drops), even if some already exist
+    this._startWatcher(url, projectId);
 
     return { projectId, found };
   }
@@ -144,16 +141,24 @@ class BotManager extends EventEmitter {
       return 0;
     }
 
+    const src = project.sources.find(s => s.url === collectionUrl);
+
     if (productUrls.length === 0) {
-      this.emit('source:watching', { projectId, collectionUrl });
+      // Only notify once when entering 'watching' state (avoid toast spam)
+      if (src && src.status !== 'watching') {
+        src.status = 'watching';
+        updateSourceStatus(collectionUrl, 'watching');
+      }
+      if (!this._watchers.has(collectionUrl)) {
+        this.emit('source:watching', { projectId, collectionUrl });
+      }
       return 0;
     }
 
-    updateSourceStatus(collectionUrl, 'active');
-    const src = project.sources.find(s => s.url === collectionUrl);
-    if (src) src.status = 'active';
-
-    this.emit('source:found', { projectId, collectionUrl, count: productUrls.length });
+    if (!src || src.status !== 'active') {
+      updateSourceStatus(collectionUrl, 'active');
+      if (src) src.status = 'active';
+    }
 
     let added = 0;
     for (const url of productUrls) {
@@ -164,6 +169,9 @@ class BotManager extends EventEmitter {
         this._startMonitoring(url, projectId).catch(() => {});
         added++;
       }
+    }
+    if (added > 0) {
+      this.emit('source:found', { projectId, collectionUrl, count: added });
     }
     return added;
   }
@@ -182,16 +190,24 @@ class BotManager extends EventEmitter {
     if (this._watchers.has(collectionUrl)) return;
     console.log(`[bot] Watching ${collectionUrl} for drop…`);
 
+    let busy = false;
     const timer = setInterval(async () => {
       const project = this.projects.get(projectId);
-      if (!project) { clearInterval(timer); this._watchers.delete(collectionUrl); return; }
-
-      const found = await this._scanAndAdd(collectionUrl, projectId, project);
-      if (found > 0) {
-        console.log(`[bot] Drop detected at ${collectionUrl} — ${found} product(s) added`);
-        clearInterval(timer);
-        this._watchers.delete(collectionUrl);
-        this.emit('project:updated', this._serializeProject(project));
+      if (!project || !project.sources.some(s => s.url === collectionUrl)) {
+        clearInterval(timer); this._watchers.delete(collectionUrl); return;
+      }
+      if (busy) return; // skip tick if previous scan still running
+      busy = true;
+      try {
+        const found = await this._scanAndAdd(collectionUrl, projectId, project);
+        if (found > 0) {
+          console.log(`[bot] Drop detected at ${collectionUrl} — ${found} new product(s) added`);
+          this.emit('project:updated', this._serializeProject(project));
+        }
+      } catch (err) {
+        console.error(`[bot] watcher error ${collectionUrl}:`, err.message);
+      } finally {
+        busy = false;
       }
     }, WATCHER_INTERVAL_MS);
 
@@ -241,6 +257,7 @@ class BotManager extends EventEmitter {
         const ts = timestamp instanceof Date ? timestamp.toISOString() : timestamp;
         e.productName = data.productName;
         e.variants    = data.variants;
+        e.error       = null;
         e.history.push({ timestamp: ts, variants: data.variants });
         if (e.history.length > 200) e.history = e.history.slice(-200);
 

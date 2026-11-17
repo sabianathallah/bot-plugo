@@ -47,7 +47,77 @@ async function fetchPlugoPayload(productUrl) {
  * This handles both standard size labels (S/M/L/XL) and store-specific
  * product codes (e.g. "CH366") used by some Plugo stores.
  */
+/**
+ * Structured decoder: find the product object ({ productVariations, useStock })
+ * and read each variation's inventories. Empty inventories = stock 0 (sold out),
+ * which the legacy scan below cannot see. Returns null if structure not found.
+ */
+function decodeStructured(payload) {
+  const R = (ref) => (typeof ref === 'number' && ref >= 0 && ref < payload.length ? payload[ref] : undefined);
+  for (const el of payload) {
+    if (!el || typeof el !== 'object' || Array.isArray(el)) continue;
+    if (!('productVariations' in el) || !('useStock' in el) || !('name' in el)) continue;
+
+    const vars = R(el.productVariations);
+    if (!Array.isArray(vars) || vars.length === 0) continue;
+
+    const productName = typeof R(el.name) === 'string' ? R(el.name) : null;
+    const variants = [];
+    for (const vRef of vars) {
+      const v = R(vRef);
+      if (!v || typeof v !== 'object' || !('inventories' in v)) continue;
+
+      // Label: join detail values (size/color…); no details → product code
+      const details = R(v.details);
+      const parts = [];
+      if (Array.isArray(details)) {
+        for (const dRef of details) {
+          const d = R(dRef);
+          const val = d && typeof d === 'object' ? R(d.value) : undefined;
+          if (typeof val === 'string' && val.trim()) parts.push(val.trim());
+        }
+      }
+      let label = parts.join(' / ');
+      if (!label) {
+        const prod = R(v.product);
+        const code = prod && typeof prod === 'object' ? R(prod.productCode) : undefined;
+        label = typeof code === 'string' && code ? code : (productName ?? 'DEFAULT');
+      }
+      label = label.toUpperCase();
+
+      // Stock: sum of inventory quantities; empty array = 0
+      const inv = R(v.inventories);
+      let stock = 0;
+      if (Array.isArray(inv)) {
+        for (const iRef of inv) {
+          const it = R(iRef);
+          const q = it && typeof it === 'object' ? R(it.quantity) : undefined;
+          if (typeof q === 'number') stock += q;
+        }
+      }
+
+      const existing = variants.find(x => x.label === label);
+      if (existing) existing.stock += stock;
+      else variants.push({ label, stock });
+    }
+    if (variants.length > 0) return { productName, variants };
+  }
+  return null;
+}
+
 function decodePlugoPayload(payload, productUrl) {
+  const structured = decodeStructured(payload);
+  const legacy = decodeLegacy(payload, productUrl);
+  if (structured) {
+    return {
+      productName: structured.productName || legacy.productName,
+      variants: structured.variants,
+    };
+  }
+  return legacy;
+}
+
+function decodeLegacy(payload, productUrl) {
   const SKIP_STRINGS = new Set([
     'normal', 'unavailable', 'available', 'Ukuran', 'Warna', 'desc', 'asc',
     'mobile', 'desktop', 'tablet', 'id', 'success', 'error', 'loading',
@@ -181,7 +251,11 @@ export async function scanCollectionPage(collectionUrl) {
       );
       const products = apiRes.data?.data ?? apiRes.data;
       if (Array.isArray(products) && products.length > 0) {
-        return products.map(p => `${base.protocol}//${base.host}/products/${p.id}`);
+        return products.map(p => {
+          const slug = String(p.name ?? '')
+            .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+          return `${base.protocol}//${base.host}/products/${p.id}${slug ? '/' + slug : ''}`;
+        });
       }
     } catch { /* fall through to HTML scrape */ }
   }

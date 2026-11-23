@@ -268,83 +268,99 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 
 pdf_path = os.path.join(OUT, 'Laporan Dust La Stella - Drop 21 Nov 2026.pdf')
 ss = getSampleStyleSheet()
-H1 = ParagraphStyle('h1', parent=ss['Title'], fontSize=16, alignment=0, spaceAfter=4)
-H2 = ParagraphStyle('h2', parent=ss['Heading2'], fontSize=11.5, spaceBefore=10, spaceAfter=4)
+H1 = ParagraphStyle('h1', parent=ss['Normal'], fontName='Helvetica-Bold', fontSize=13, leading=16, spaceAfter=4)
+H2 = ParagraphStyle('h2', parent=ss['Normal'], fontName='Helvetica-Bold', fontSize=10, leading=13, spaceBefore=9, spaceAfter=4)
 P = ParagraphStyle('p', parent=ss['BodyText'], fontSize=8.5, leading=11)
-SM = ParagraphStyle('sm', parent=P, fontSize=7.5, leading=9.5, textColor=colors.HexColor('#555555'))
+SM = ParagraphStyle('sm', parent=P, fontSize=7.5, leading=9.5)
 CELL = ParagraphStyle('cell', parent=P, fontSize=7.5, leading=9)
-HEAD = ParagraphStyle('head', parent=CELL, fontName='Helvetica-Bold', textColor=colors.white)
+HEAD = ParagraphStyle('head', parent=CELL, fontName='Helvetica-Bold')
 
 def table(data, widths, bold_last=False, align_right_from=1):
     data = [[Paragraph(str(c), HEAD) for c in data[0]]] + \
            [[Paragraph(str(c), CELL) if isinstance(c, str) and len(c) > 26 else c for c in r] for r in data[1:]]
     t = Table(data, colWidths=widths, repeatRows=1)
     st = [('FONT', (0, 0), (-1, -1), 'Helvetica', 7.5), ('FONT', (0, 0), (-1, 0), 'Helvetica-Bold', 7.5),
-          ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1F1F1F')), ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-          ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#CCCCCC')), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-          ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F5F5F2')]),
+          ('GRID', (0, 0), (-1, -1), 0.4, colors.black), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
           ('ALIGN', (align_right_from, 1), (-1, -1), 'RIGHT'), ('TOPPADDING', (0, 0), (-1, -1), 2.5), ('BOTTOMPADDING', (0, 0), (-1, -1), 2.5)]
-    if bold_last: st += [('FONT', (0, -1), (-1, -1), 'Helvetica-Bold', 7.5), ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#E9F7C8'))]
+    if bold_last: st += [('FONT', (0, -1), (-1, -1), 'Helvetica-Bold', 7.5)]
     t.setStyle(TableStyle(st)); return t
 
-short = lambda n: (n.replace('DLS Metal Logo - ', 'Metal Logo ').replace('Signature Knit Long-Sleeve - ', 'Signature Knit LS ')
-                    .replace('Signature Knit Long Sleeve - ', 'Signature Knit LS ').replace('Signature Logo Hoodie - ', 'Signature Logo Hoodie ')
-                    .replace('Pullover Hoodie - Red Airbrush by DLS Concept', 'Red Airbrush Hoodie').replace('DLS X REUDE - ', ''))
-num = lambda n: f"{n:,}".replace(',', '.')
-pct = lambda a, b: f"{a / b * 100:.0f}%" if b else '-'
-story = [Paragraph('Laporan Drop Dust La Stella', H1),
-         Paragraph(f'Rilis Sabtu, 21 November 2026 pukul 15:00 WIB. Data sampai {fmt_t(TEND, True)} WIB.', P), Spacer(1, 6)]
+short = lambda n: (n.replace('DLS Metal Logo - ', 'Metal Logo ').replace('Signature Knit Long-Sleeve - ', 'Sig. Knit LS ')
+                    .replace('Signature Knit Long Sleeve - ', 'Sig. Knit LS ').replace('Signature Logo Hoodie - ', 'Sig. Logo Hoodie ')
+                    .replace('Pullover Hoodie - Red Airbrush by DLS Concept', 'Red Airbrush Hoodie').replace('DLS X REUDE - ', 'REUDE '))
+story = []
+story += [Paragraph('Laporan Drop Dust La Stella - 21 November 2026', H1),
+          Paragraph(f'Sumber: bot stock monitor (cek tiap 5-10 detik) + counter order Plugo. Rilis 21/11/2026 15:00 WIB. '
+                    f'Bot mulai {fmt_t(T0)} WIB (terlambat 12 menit). Data s/d {fmt_t(TEND, True)} WIB. '
+                    f'Dibuat {fmt_t(generated, True)} WIB.', P), Spacer(1, 4)]
 
-# Ringkasan
-story += [Paragraph('Ringkasan', H2), table(
-    [['Stok awal', 'Terjual', 'Sisa stok', '% terjual', 'Omset estimasi'],
-     [num(TOT['init_est']), num(TOT['sold']), num(TOT['stock_last']), pct(TOT['sold'], TOT['init_est']), rp(TOT['omset'])]],
-    [36*mm] * 5, align_right_from=0),
-    Spacer(1, 3),
-    Paragraph(f"{TOT['orders_first']} order masuk di 12 menit pertama. 4 dari 5 produk sudah habis sebelum 15:12.", P)]
+story += [Paragraph('Ringkasan', H2), table([
+    ['Stok awal est. (15:00)', 'Terjual est. (net)', '% terjual', 'Omset est.', 'Order Plugo', 'Omset batas atas'],
+    [f"{TOT['init_est']:,}".replace(',', '.'), f"{TOT['sold']:,}".replace(',', '.'), f"{TOT['sold'] / TOT['init_est'] * 100:.1f}%",
+     rp(TOT['omset']), f"{TOT['orders_last']:,}".replace(',', '.'), rp(TOT['omset_upper'])]], [30*mm] * 6, align_right_from=0),
+    Paragraph(f"Dalam 12 menit pertama (15:00-15:12) sudah {TOT['orders_first']} order masuk, "
+              f"{TOT['orders_first'] / TOT['init_est'] * 100:.0f}% dari estimasi stok awal. "
+              f"7 produk DLS X REUDE ikut terjadwal 15:00 tapi tidak pernah diisi stok selama dipantau.", SM)]
 
-# Per produk
-story += [Paragraph('Penjualan per Produk', H2), table(
-    [['Produk', 'Harga', 'Stok awal', 'Terjual', 'Sisa', '% terjual', 'Omset estimasi']]
-    + [[short(s['name']), rp(s['price']), s['init_est'], s['sold'], s['stock_last'], pct(s['sold'], s['init_est']), rp(s['omset'])] for s in sold_rows]
-    + [['TOTAL', '', TOT['init_est'], TOT['sold'], TOT['stock_last'], pct(TOT['sold'], TOT['init_est']), rp(TOT['omset'])]],
-    [56*mm, 22*mm, 18*mm, 17*mm, 14*mm, 18*mm, 35*mm], bold_last=True)]
+story += [Paragraph('1. Produk & Stok Awal (estimasi 15:00)', H2), table(
+    [['Produk', 'SKU', 'Harga', 'Stok 15:12', 'Order 15:12', 'Stok awal est.']]
+    + [[short(s['name']), s['sku'], rp(s['price']), s['stock_first'], s['orders_first'], s['init_est']] for s in sold_rows]
+    + [['TOTAL', '', '', TOT['stock_first'], TOT['orders_first'], TOT['init_est']]],
+    [58*mm, 38*mm, 22*mm, 18*mm, 20*mm, 24*mm], bold_last=True, align_right_from=2),
+    Paragraph('Stok awal est. = stok terlihat 15:12:20 + order Plugo saat itu. Sebelum 15:12 belum ada checkout yang sempat lepas '
+              '(pada drop sebelumnya baru lepas 12-22 menit), jadi stok yang hilang = checkout. Asumsi 1 unit per order.', SM)]
 
-# Kapan habis
-def habis(s):
-    if not s['first_out']: return 'Tidak habis'
-    return 'Sebelum 15:12' if s['first_out'] == s['first_t'] else fmt_t(s['first_out'])
-story += [Paragraph('Kapan Habis', H2), table(
-    [['Produk', 'Habis', 'Stok muncul lagi', 'Sisa sekarang']]
-    + [[short(s['name']), habis(s), (f"{len(s['back'])}x, mulai {fmt_t(s['back'][0])}" if s['back'] else '-'), s['stock_last']] for s in sold_rows],
-    [70*mm, 34*mm, 46*mm, 30*mm], align_right_from=3),
-    Spacer(1, 3),
-    Paragraph('Stok yang "muncul lagi" = checkout yang tidak dibayar, lalu stoknya dilepas kembali ke toko.', SM)]
+story += [Paragraph('2. Output & Estimasi Sales', H2), table(
+    [['Produk', 'Stok awal est.', 'Stok akhir', 'Terjual est.', '% terjual', 'Omset est.', 'Order Plugo', 'Batas atas']]
+    + [[short(s['name']), s['init_est'], s['stock_last'], s['sold'], f"{s['pct']:.1f}%", rp(s['omset']), s['orders_last'], rp(s['omset_upper'])] for s in sold_rows]
+    + [['TOTAL', TOT['init_est'], TOT['stock_last'], TOT['sold'], f"{TOT['sold'] / TOT['init_est'] * 100:.1f}%", rp(TOT['omset']), TOT['orders_last'], rp(TOT['omset_upper'])]],
+    [48*mm, 18*mm, 15*mm, 17*mm, 15*mm, 25*mm, 17*mm, 25*mm], bold_last=True),
+    Paragraph('Terjual est. = stok awal est. - stok akhir (net). Omset = terjual x harga, sebelum diskon/ongkir. '
+              'Order Plugo menghitung semua checkout termasuk yang tidak dibayar, jadi "Batas atas" adalah plafon, bukan angka penjualan.', SM)]
 
-# Per periode (units only, merged)
-simple_bounds = [RELEASE, T0, D(21, 16), D(21, 18), D(22, 1, 30), TEND]
-rows = []
-for a, b in zip(simple_bounds, simple_bounds[1:]):
-    if a == RELEASE:
-        u = TOT['orders_first']
-    else:
-        u = sum(total(value_at(p, a)[2]) - total(value_at(p, b)[2]) for p in pids)
-    lbl = {RELEASE: '15:00 - 15:12 (sebelum bot jalan)'}.get(a, f"{fmt_t(a, True)[:-3]} - {fmt_t(b, True)[:-3]}")
-    rows.append([lbl, u])
-story += [Paragraph('Penjualan per Waktu (unit)', H2), table(
-    [['Waktu (WIB)', 'Unit terjual']] + rows + [['TOTAL', TOT['sold']]],
-    [90*mm, 30*mm], bold_last=True),
-    Spacer(1, 3),
-    Paragraph('Angka minus = stok bertambah karena checkout tidak dibayar dilepas lagi.', SM)]
+story += [Paragraph('3. Timeline Sold Out', H2), table(
+    [['Produk', 'Habis pertama', 'Stok muncul lagi', 'Pertama muncul lagi', 'Puncak stok setelah habis', 'Stok akhir']]
+    + [[short(s['name']), ('sebelum 15:12' if s['first_out'] == s['first_t'] else fmt_t(s['first_out'])), f"{len(s['back'])}x",
+        fmt_t(s['back'][0]) if s['back'] else '-', s['peak_after'], s['stock_last']] for s in sold_rows],
+    [52*mm, 26*mm, 24*mm, 28*mm, 30*mm, 18*mm]),
+    Paragraph('Purple dan Red Airbrush sempat "muncul lagi" lalu habis lagi: pola checkout yang tidak dibayar lalu stoknya dilepas. '
+              'Black dan Thermal tidak pernah terlihat ada stok selama dipantau. Metal Logo Hoodie tidak pernah habis total dan masih ada stok di akhir periode.', SM)]
 
-# Catatan
-story += [Paragraph('Catatan', H2), table(
-    [['Hal', 'Keterangan']] + [[a, Paragraph(b, CELL)] for a, b in [
-        ('Cara hitung', 'Estimasi dari stok yang terlihat di website, bukan data order toko. Terjual = stok awal - sisa stok. Omset = terjual x harga, sebelum diskon/ongkir.'),
-        ('Stok awal', 'Bot mulai 15:12 (telat 12 menit). Stok awal = stok saat 15:12 + jumlah order yang sudah masuk saat itu.'),
-        ('Data terputus', f'Bot sempat berhenti total {gap_min / 60:.0f} jam (laptop tidur), terlama Minggu dini hari s/d Senin pagi. Total terjual tetap terhitung, hanya jam persisnya yang tidak diketahui.'),
-        ('Kolaborasi REUDE', '7 produk DLS X REUDE dijadwalkan 15:00 tapi stoknya belum pernah dibuka selama dipantau.'),
-    ]], [32*mm, 148*mm], align_right_from=99)]
+ranked = sorted(sold_rows, key=lambda s: -s['sold'])
+story += [Paragraph('4. Ranking Produk Paling Laku', H2), table(
+    [['#', 'Produk', 'Terjual est.', '% terjual', 'Omset est.', 'Sisa stok']]
+    + [[i + 1, short(s['name']), s['sold'], f"{s['pct']:.1f}%", rp(s['omset']), s['stock_last']] for i, s in enumerate(ranked)],
+    [8*mm, 62*mm, 22*mm, 20*mm, 30*mm, 20*mm], align_right_from=2)]
+
+story += [Paragraph('5. Penjualan per Periode (unit net / order Plugo)', H2), table(
+    [['Periode (WIB)', 'Data hilang'] + [short(meta[p]['name'])[:16] for p in pids] + ['Total unit', 'Total order']]
+    + [[period_label(p) + (' *' if p['a'] == RELEASE else ''), f"{round(p['gap'])} mnt" if round(p['gap']) else '-']
+       + [f"{p['units'][x]}/{p['orders'][x]}" for x in pids] + [sum(p['units'].values()), sum(p['orders'].values())] for p in periods]
+    + [['TOTAL', ''] + [f"{s['sold']}/{s['orders_last']}" for s in sold_rows] + [TOT['sold'], TOT['orders_last']]],
+    [37*mm, 15*mm] + [18*mm] * len(pids) + [15*mm, 15*mm], bold_last=True),
+    Paragraph('Format sel: unit net / order baru. Angka negatif = stok bertambah (checkout lepas atau restock). '
+              '* 15:00-15:12 sebelum bot jalan: dihitung dari order Plugo. Periode dengan "data hilang" hanya diketahui selisih totalnya.', SM)]
+
+story += [Paragraph('6. Pergerakan Stok (gross, selama dipantau)', H2), table(
+    [['Produk', 'Total stok turun', 'Total stok naik', 'Stok terendah', 'Waktu terendah']]
+    + [[short(s['name']), s['down'], s['up'], s['min_stock'], fmt_t(s['min_t'], True)] for s in sold_rows],
+    [60*mm, 28*mm, 28*mm, 24*mm, 30*mm]),
+    Paragraph('Stok naik umumnya checkout tidak dibayar yang dilepas. Angka gross bisa lebih kecil dari aktual karena pergerakan saat jeda data '
+              'tidak terlihat - karena itu angka terjual memakai selisih net.', SM)]
+
+big_gaps = [g for g in gaps if (g[1] - g[0]).total_seconds() >= 600]
+story += [Paragraph('7. Catatan & Kelengkapan Data', H2), table(
+    [['Topik', 'Keterangan']] + [[a, Paragraph(b, CELL)] for a, b in [
+        ('Metode', 'Estimasi dari stok publik + counter order Plugo, bukan data order toko.'),
+        ('Mulai telat', 'Bot mulai 15:12:20; 15:00-15:12 diestimasi dari order Plugo (lihat bagian 1).'),
+        ('Jeda data', f'Total {gap_min / 60:.1f} jam tanpa data (laptop tidur / internet putus). Jeda >= 10 menit: '
+                      + '; '.join(f"{fmt_t(a, True)}-{fmt_t(b, True)}" for a, b in big_gaps) + '.'),
+        ('Dampak jeda', 'Terjual net & order Plugo tetap akurat (pakai titik awal & akhir). Waktu persis dan pergerakan gross saat jeda tidak diketahui.'),
+        ('Restock', 'Jika toko menambah stok asli, terjual net jadi lebih kecil dari aktual.'),
+        ('Sig. Knit Purple', 'Produk lama; order Plugo-nya bisa termasuk penjualan sebelum drop ini, jadi stok awal & terjual bisa lebih tinggi dari aktual.'),
+        ('REUDE', 'DLS X REUDE (7 produk: ' + ', '.join(short(s['name']).replace('REUDE ', '') for s in idle_rows if 'REUDE' in s['name']) +
+                  ') stok tidak pernah diisi selama dipantau; order 0.'),
+    ]], [30*mm, 150*mm], align_right_from=99)]
 
 SimpleDocTemplate(pdf_path, pagesize=A4, leftMargin=14*mm, rightMargin=14*mm, topMargin=14*mm, bottomMargin=14*mm,
                   title='Laporan Drop Dust La Stella 21 Nov 2026').build(story)

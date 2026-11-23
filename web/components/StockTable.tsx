@@ -6,9 +6,9 @@ import type { Product, Variant } from '@/lib/ws-hook';
 interface Props { product: Product }
 
 function stockStatus(s: number): { label: string; color: string } {
-  if (s === 0) return { label: 'OUT OF STOCK', color: '#FF3030' };
-  if (s <= 3)  return { label: `LOW  ·  ${s}`, color: '#FF9500' };
-  return            { label: 'IN STOCK',       color: '#00FF6A' };
+  if (s === 0) return { label: 'HABIS',    color: 'var(--out)' };
+  if (s <= 3)  return { label: 'MENIPIS',  color: 'var(--down)' };
+  return            { label: 'TERSEDIA', color: 'var(--signal)' };
 }
 
 type FlashMap = Record<string, 'restock' | 'soldout' | 'change'>;
@@ -46,82 +46,47 @@ export function StockTable({ product }: Props) {
 
   useEffect(() => { prevRef.current = product.variants; });
 
-  const total = product.variants.reduce((s, v) => s + v.stock, 0);
+  const total    = product.variants.reduce((s, v) => s + v.stock, 0);
   const outCount = product.variants.filter(v => v.stock === 0).length;
+  // Scale bars against the highest stock this product has shown in its history
+  const peak = Math.max(1, ...product.history.flatMap(h => h.variants.map(v => v.stock)), ...product.variants.map(v => v.stock));
 
   return (
     <div>
-      {/* Summary row */}
-      <div className="flex gap-4 mb-3">
-        <div>
-          <div className="text-[10px] text-[#444] tracking-widest" style={{ fontFamily: 'var(--font-jetbrains)' }}>TOTAL STOCK</div>
-          <div className="text-[22px] text-white leading-tight" style={{ fontFamily: 'var(--font-bebas)' }}>{total.toLocaleString()}</div>
-        </div>
-        {outCount > 0 && (
-          <div>
-            <div className="text-[10px] text-[#444] tracking-widest" style={{ fontFamily: 'var(--font-jetbrains)' }}>SOLD OUT</div>
-            <div className="text-[22px] text-[#FF3030] leading-tight" style={{ fontFamily: 'var(--font-bebas)' }}>{outCount}</div>
-          </div>
-        )}
-        <div>
-          <div className="text-[10px] text-[#444] tracking-widest" style={{ fontFamily: 'var(--font-jetbrains)' }}>SIZES</div>
-          <div className="text-[22px] text-[#888] leading-tight" style={{ fontFamily: 'var(--font-bebas)' }}>{product.variants.length}</div>
-        </div>
+      <div className="flex items-end gap-5 mb-3">
+        <Stat label="Total stok" value={total.toLocaleString('id-ID')} color="var(--ink)" />
+        <Stat label="Size habis" value={`${outCount}/${product.variants.length}`} color={outCount ? 'var(--out)' : 'var(--ink-2)'} />
       </div>
 
-      {/* Table */}
-      <table className="w-full border-collapse">
-        <thead>
-          <tr className="border-b border-[#1A1A1A]">
-            {['SIZE', 'STOCK', 'STATUS'].map(h => (
-              <th
-                key={h}
-                className="pb-2 text-left text-[10px] tracking-widest text-[#333]"
-                style={{ fontFamily: 'var(--font-jetbrains)' }}
-              >
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {product.variants.map(v => {
-            const { label, color } = stockStatus(v.stock);
-            const flash = flashMap[v.label];
-            return (
-              <tr
-                key={v.label}
-                className={`border-b border-[#141414] last:border-0 ${flash ? FLASH_CLASS[flash] : ''}`}
-              >
-                <td className="py-2.5 pr-4">
-                  <span
-                    className="text-sm font-bold text-white"
-                    style={{ fontFamily: 'var(--font-jetbrains)' }}
-                  >
-                    {v.label}
-                  </span>
-                </td>
-                <td className="py-2.5 pr-4">
-                  <span
-                    className="text-sm tabular-nums"
-                    style={{ fontFamily: 'var(--font-jetbrains)', color: v.stock === 0 ? '#FF3030' : v.stock <= 3 ? '#FF9500' : '#C8FF00' }}
-                  >
-                    {v.stock}
-                  </span>
-                </td>
-                <td className="py-2.5">
-                  <span
-                    className="text-[10px] tracking-wider"
-                    style={{ fontFamily: 'var(--font-jetbrains)', color }}
-                  >
-                    {label}
-                  </span>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      <div className="grid gap-1">
+        {product.variants.map(v => {
+          const { label, color } = stockStatus(v.stock);
+          const flash = flashMap[v.label];
+          const w = v.stock === 0 ? 0 : Math.max(3, (v.stock / peak) * 100);
+          return (
+            <div
+              key={v.label}
+              className={`grid grid-cols-[minmax(44px,auto)_36px_1fr_auto] items-center gap-3 px-2 py-1.5 rounded-sm ${flash ? FLASH_CLASS[flash] : ''}`}
+            >
+              <span className="mono text-[12.5px] font-bold text-[var(--ink)] truncate" title={v.label}>{v.label}</span>
+              <span className="mono text-[13px] tnum text-right" style={{ color }}>{v.stock}</span>
+              <span className="h-[5px] bg-[var(--panel-2)] rounded-sm overflow-hidden">
+                <span className="block h-full rounded-sm transition-[width] duration-500" style={{ width: `${w}%`, background: color }} />
+              </span>
+              <span className="mono text-[9.5px] tracking-[0.12em] w-[74px] text-right" style={{ color }}>{label}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div>
+      <div className="lbl text-[9px]">{label}</div>
+      <div className="display tnum text-[24px] leading-none mt-1" style={{ color }}>{value}</div>
     </div>
   );
 }

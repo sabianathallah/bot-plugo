@@ -5,3 +5,8 @@ plugo-stock-*.csv
 data/*.db
 data/*.db-shm
 data/*.db-wal
+
+# Monitoring data (DBs, jsonl logs, backups) — large, stays local
+data/
+*.tsbuildinfo
+__pycache__/

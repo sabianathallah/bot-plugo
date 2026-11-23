@@ -96,11 +96,14 @@ function decodeStructured(payload) {
         }
       }
 
+      const price = typeof R(v.price) === 'number' ? R(v.price) : null;
+
       const existing = variants.find(x => x.label === label);
       if (existing) existing.stock += stock;
-      else variants.push({ label, stock });
+      else variants.push({ label, stock, price });
     }
-    if (variants.length > 0) return { productName, variants };
+    const numOrders = typeof R(el.numOrders) === 'number' ? R(el.numOrders) : null;
+    if (variants.length > 0) return { productName, variants, numOrders };
   }
   return null;
 }
@@ -112,6 +115,7 @@ function decodePlugoPayload(payload, productUrl) {
     return {
       productName: structured.productName || legacy.productName,
       variants: structured.variants,
+      numOrders: structured.numOrders,
     };
   }
   return legacy;
@@ -242,30 +246,39 @@ export async function scanCollectionPage(collectionUrl) {
   const base      = new URL(collectionUrl);
   const vendorId  = extractVendorId(html);
 
-  // Try the Plugo products API for full product list (all pages)
+  const found = new Map(); // productId → url (dedupe by id)
+  const slugify = (name) => String(name ?? '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+  // 1) Plugo products API — paginate with limit/offset until total
   if (vendorId) {
     try {
-      const apiRes = await axios.get(
-        `https://api.plugo.world/v1/shop/${vendorId}/products`,
-        { timeout: 10_000, headers: { 'User-Agent': BROWSER_HEADERS['User-Agent'] } }
-      );
-      const products = apiRes.data?.data ?? apiRes.data;
-      if (Array.isArray(products) && products.length > 0) {
-        return products.map(p => {
-          const slug = String(p.name ?? '')
-            .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-          return `${base.protocol}//${base.host}/products/${p.id}${slug ? '/' + slug : ''}`;
-        });
+      const LIMIT = 100;
+      for (let offset = 0; offset < 5000; offset += LIMIT) {
+        const apiRes = await axios.get(
+          `https://api.plugo.world/v1/shop/${vendorId}/products?limit=${LIMIT}&offset=${offset}`,
+          { timeout: 10_000, headers: { 'User-Agent': BROWSER_HEADERS['User-Agent'], 'Cache-Control': 'no-cache' } }
+        );
+        const products = apiRes.data?.data ?? [];
+        const total    = apiRes.data?.total ?? 0;
+        if (!Array.isArray(products) || products.length === 0) break;
+        for (const p of products) {
+          if (!found.has(String(p.id))) {
+            const slug = slugify(p.name);
+            found.set(String(p.id), `${base.protocol}//${base.host}/products/${p.id}${slug ? '/' + slug : ''}`);
+          }
+        }
+        if (offset + products.length >= total) break;
       }
     } catch { /* fall through to HTML scrape */ }
   }
 
-  // Fallback: extract hrefs from HTML (first page only)
-  const found = new Set();
-  for (const [, path] of html.matchAll(/href="(\/products\/\d+\/[^"?#\s]+)"/g)) {
-    found.add(`${base.protocol}//${base.host}${path}`);
+  // 2) Always also take product links from the page HTML (e.g. category page)
+  for (const [, id, rest] of html.matchAll(/href="\/products\/(\d+)(\/[^"?#\s]*)?"/g)) {
+    if (!found.has(id)) found.set(id, `${base.protocol}//${base.host}/products/${id}${rest ?? ''}`);
   }
-  return [...found];
+
+  return [...found.values()];
 }
 
 /**

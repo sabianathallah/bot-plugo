@@ -3,12 +3,32 @@ import { detectPlugoEndpoint, isCollectionUrl, scanCollectionPage } from '../../
 import { StockPoller } from '../../src/poller.js';
 import {
   createProject, renameProject as dbRenameProject, deleteProject as dbDeleteProject,
-  setProjectIntervalMs as dbSetInterval,
+  setProjectIntervalMs as dbSetInterval, setProjectPaused as dbSetPaused,
   getAllProjects, getProjectById, getProductsByProject,
   upsertSource, updateSourceStatus, getSourcesByProject, getAllSources, deleteSource,
   saveProduct, updateProductName, deleteProduct,
-  getAllProducts, saveSnapshot, saveChanges, getHistory, getExportData,
+  getAllProducts, saveSnapshot, saveChanges, getExportData,
+  getCompressedHistory, getProductChanges, getProductMeta, saveProductMeta, saveOrderEvent,
+  getRecentActivity, getExportChanges, getExportOrders,
 } from './db.js';
+import { SalesTracker } from './sales.js';
+
+const HISTORY_MAX = 500;
+const stripVariants = (vs) => (vs ?? []).map(v => ({ label: v.label, stock: v.stock }));
+const sameStock = (a, b) => !!a && !!b && a.length === b.length &&
+  a.every((x, i) => x.label === b[i].label && x.stock === b[i].stock);
+
+// Append to history, collapsing runs of identical stock into their endpoints
+function pushHistory(history, timestamp, variants) {
+  const v = stripVariants(variants);
+  const n = history.length;
+  if (n >= 2 && sameStock(history[n - 1].variants, v) && sameStock(history[n - 2].variants, v)) {
+    history[n - 1] = { timestamp, variants: v };
+  } else {
+    history.push({ timestamp, variants: v });
+    if (history.length > HISTORY_MAX) history.splice(0, history.length - HISTORY_MAX);
+  }
+}
 
 // Poll collection for NEW products (drops). Override with WATCHER_INTERVAL_MS env.
 const WATCHER_INTERVAL_MS = parseInt(process.env.WATCHER_INTERVAL_MS ?? '5000', 10);
@@ -31,21 +51,37 @@ class BotManager extends EventEmitter {
   // ── Serialise state for WS init ───────────────────────────────────────────
   getState() {
     return {
-      projects: [...this.projects.values()].map(p => ({
-        id:         p.id,
-        name:       p.name,
-        intervalMs: p.intervalMs,
-        sources:    p.sources,
-        products:   [...p.products.entries()].map(([url, e]) => ({
-          productUrl:  url,
-          productName: e.productName,
-          variants:    e.variants,
-          history:     e.history.slice(-100),
-          status:      e.status,
-          error:       e.error ?? null,
-        })),
-      })),
+      activities: this._recentActivities(),
+      projects: [...this.projects.values()].map(p => this._serializeProject(p)),
     };
+  }
+
+  _recentActivities(limit = 300) {
+    const { changes, orders } = getRecentActivity(limit);
+    const groups = new Map(); // `${url}|${ts}` → activity
+    const add = (url, name, projectId, ts, change) => {
+      const key = `${url}|${ts}`;
+      if (!groups.has(key)) groups.set(key, { id: key, timestamp: ts, productName: name, productUrl: url, projectId, changes: [] });
+      groups.get(key).changes.push(change);
+    };
+    for (const c of changes) {
+      const price = this._priceOf(c.url, c.variant);
+      add(c.url, c.name, c.project_id, c.occurred_at,
+        { label: c.variant, oldStock: c.old_stock, newStock: c.new_stock, type: c.change_type, price });
+    }
+    for (const o of orders) {
+      add(o.url, o.name, o.project_id, o.occurred_at,
+        { label: 'ORDERS', oldStock: o.old_orders, newStock: o.new_orders, type: 'order' });
+    }
+    return [...groups.values()]
+      .sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1))
+      .slice(0, limit);
+  }
+
+  _priceOf(url, label) {
+    const projectId = this._urlToProject.get(url);
+    const e = projectId != null ? this.projects.get(projectId)?.products.get(url) : null;
+    return e?.prices?.[label] ?? null;
   }
 
   // ── Boot: restore everything from DB ─────────────────────────────────────
@@ -57,6 +93,7 @@ class BotManager extends EventEmitter {
 
     for (const dbProject of dbProjects) {
       const project = this._initProject(dbProject.id, dbProject.name, dbProject.interval_ms ?? 5000);
+      project.paused = !!dbProject.paused;
 
       const sources  = getSourcesByProject(dbProject.id);
       const products = getProductsByProject(dbProject.id);
@@ -70,10 +107,20 @@ class BotManager extends EventEmitter {
       const monitoringPromises = [];
       for (const { url, name } of products) {
         this._seedProduct(url, name, dbProject.id, project);
+        if (project.paused) { // paused: show data, don't poll
+          const e = project.products.get(url);
+          if (e) { e.status = 'paused'; e.variants = e.history.at(-1)?.variants ?? []; }
+          continue;
+        }
         this.emit('product:detecting', { projectId: dbProject.id, productUrl: url });
         monitoringPromises.push(this._startMonitoring(url, dbProject.id));
       }
       await Promise.allSettled(monitoringPromises);
+
+      if (project.paused) {
+        console.log(`[bot] Project "${dbProject.name}" is paused — not polling`);
+        continue;
+      }
 
       // Always watch every source for newly launched products
       for (const src of sources) {
@@ -160,8 +207,15 @@ class BotManager extends EventEmitter {
       if (src) src.status = 'active';
     }
 
+    // Dedupe by Plugo product id — the same product can appear under different slugs
+    const pid = (u) => (u.match(/\/products\/(\d+)/) ?? [])[1];
+    const knownIds = new Set([...this._urlToProject.keys()].map(pid).filter(Boolean));
+
     let added = 0;
     for (const url of productUrls) {
+      const id = pid(url);
+      if (id && knownIds.has(id)) continue;
+      if (id) knownIds.add(id);
       if (!this._urlToProject.has(url)) {
         saveProduct(url, null, projectId);
         this._seedProduct(url, url, projectId, project);
@@ -224,18 +278,18 @@ class BotManager extends EventEmitter {
       if (!project) return;
       const entry = project.products.get(productUrl);
       if (!entry) return;
+      if (project.paused) return; // paused while detecting
 
       const { apiUrl, initial } = result;
       entry.productName = initial.productName;
       entry.variants    = initial.variants;
       entry.status      = 'monitoring';
+      this._updateMeta(productUrl, entry, initial, new Date().toISOString());
 
       updateProductName(productUrl, initial.productName);
       const now = new Date().toISOString();
       saveSnapshot(productUrl, initial.variants, now);
-      if (entry.history.length === 0) {
-        entry.history.push({ timestamp: now, variants: initial.variants });
-      }
+      pushHistory(entry.history, now, initial.variants);
 
       this.emit('product:added', {
         projectId,
@@ -243,6 +297,7 @@ class BotManager extends EventEmitter {
         productName: initial.productName,
         variants:    initial.variants,
         history:     entry.history,
+        stats:       this._stats(entry),
       });
 
       const intervalMs = this.projects.get(projectId)?.intervalMs ?? 5000;
@@ -258,13 +313,18 @@ class BotManager extends EventEmitter {
         e.productName = data.productName;
         e.variants    = data.variants;
         e.error       = null;
-        e.history.push({ timestamp: ts, variants: data.variants });
-        if (e.history.length > 200) e.history = e.history.slice(-200);
+        pushHistory(e.history, ts, data.variants);
 
         saveSnapshot(productUrl, data.variants, ts);
         if (changes.length > 0) saveChanges(productUrl, changes, ts);
+        for (const c of changes) e.sales.apply(c.label, c.oldStock, c.newStock, ts);
+        const orderChange = this._updateMeta(productUrl, e, data, ts);
 
-        this.emit('stock:update', { projectId, productUrl, productName: data.productName, variants: data.variants, changes, timestamp: ts });
+        const priced = changes.map(c => ({ ...c, price: e.prices?.[c.label] ?? null }));
+        this.emit('stock:update', {
+          projectId, productUrl, productName: data.productName, variants: data.variants,
+          changes: priced, orderChange, timestamp: ts, stats: this._stats(e),
+        });
       });
 
       poller.on('error', ({ error }) => {
@@ -293,6 +353,27 @@ class BotManager extends EventEmitter {
     // Apply to all running pollers immediately
     for (const entry of project.products.values()) {
       entry.poller?.setIntervalMs(intervalMs);
+    }
+    this.emit('project:updated', this._serializeProject(project));
+  }
+
+  // Pause: stop all pollers + watchers but keep data. Persisted across restarts.
+  setProjectPaused(projectId, paused) {
+    const project = this.projects.get(projectId);
+    if (!project) throw new Error('Project not found');
+    dbSetPaused(projectId, paused);
+    project.paused = !!paused;
+    if (paused) {
+      for (const entry of project.products.values()) {
+        entry.poller?.stop(); entry.poller = null; entry.status = 'paused';
+      }
+      for (const src of project.sources) {
+        const timer = this._watchers.get(src.url);
+        if (timer) { clearInterval(timer); this._watchers.delete(src.url); }
+      }
+    } else {
+      for (const url of project.products.keys()) this._startMonitoring(url, projectId);
+      for (const src of project.sources) this._startWatcher(src.url, projectId);
     }
     this.emit('project:updated', this._serializeProject(project));
   }
@@ -354,25 +435,50 @@ class BotManager extends EventEmitter {
 
   _seedProduct(url, name, projectId, project) {
     this._urlToProject.set(url, projectId);
+    const meta  = getProductMeta(url) ?? { prices: {}, numOrders: null, numOrdersFirst: null };
+    const sales = new SalesTracker();
+    for (const c of getProductChanges(url)) sales.apply(c.variant, c.old_stock, c.new_stock, c.occurred_at);
     project.products.set(url, {
-      productName: name,
-      variants:    [],
-      history:     this._loadHistory(url),
-      status:      'detecting',
-      error:       null,
-      poller:      null,
+      productName:    name,
+      variants:       [],
+      history:        getCompressedHistory(url, HISTORY_MAX),
+      status:         'detecting',
+      error:          null,
+      poller:         null,
+      prices:         meta.prices ?? {},
+      numOrders:      meta.numOrders,
+      numOrdersFirst: meta.numOrdersFirst,
+      sales,
     });
   }
 
-  _loadHistory(url) {
-    const rows = getHistory(url);
-    if (rows.length === 0) return [];
-    const byTime = new Map();
-    for (const { recorded_at, variant, stock } of rows) {
-      if (!byTime.has(recorded_at)) byTime.set(recorded_at, []);
-      byTime.get(recorded_at).push({ label: variant, stock });
+  // Persist price per variant + Plugo numOrders; returns {old,new} when orders moved
+  _updateMeta(url, entry, data, ts) {
+    let dirty = false;
+    for (const v of data.variants ?? []) {
+      if (v.price != null && entry.prices[v.label] !== v.price) { entry.prices[v.label] = v.price; dirty = true; }
     }
-    return [...byTime.entries()].slice(-100).map(([timestamp, variants]) => ({ timestamp, variants }));
+    let orderChange = null;
+    if (typeof data.numOrders === 'number' && data.numOrders !== entry.numOrders) {
+      if (entry.numOrders != null) {
+        orderChange = { old: entry.numOrders, new: data.numOrders };
+        saveOrderEvent(url, entry.numOrders, data.numOrders, ts);
+      }
+      entry.numOrders = data.numOrders;
+      if (entry.numOrdersFirst == null) entry.numOrdersFirst = data.numOrders;
+      dirty = true;
+    }
+    if (dirty) saveProductMeta(url, entry.prices, entry.numOrders);
+    return orderChange;
+  }
+
+  _stats(e) {
+    return {
+      ...e.sales.summary(e.prices ?? {}),
+      numOrders:      e.numOrders ?? null,
+      numOrdersFirst: e.numOrdersFirst ?? null,
+      price:          Object.values(e.prices ?? {})[0] ?? null,
+    };
   }
 
   _serializeProject(project) {
@@ -380,20 +486,42 @@ class BotManager extends EventEmitter {
       id:         project.id,
       name:       project.name,
       intervalMs: project.intervalMs,
+      paused:     !!project.paused,
       sources:    project.sources,
       products: [...project.products.entries()].map(([url, e]) => ({
         productUrl:  url,
         productName: e.productName,
         variants:    e.variants,
-        history:     e.history.slice(-100),
+        history:     e.history,
         status:      e.status,
         error:       e.error ?? null,
+        stats:       this._stats(e),
       })),
     };
   }
 
   getExportData() {
     return getExportData();
+  }
+
+  getExportChanges() { return getExportChanges(); }
+  getExportOrders()  { return getExportOrders(); }
+
+  // One row per product: sales estimate + Plugo order counter
+  getSummaryRows() {
+    const rows = [];
+    for (const p of this.projects.values()) {
+      for (const [url, e] of p.products) {
+        const s = this._stats(e);
+        rows.push({
+          project: p.name, product: e.productName, url, price: s.price,
+          sold: s.sold, pending: s.pending, out: s.out, released: s.released, restocked: s.restocked,
+          omset: s.omset, numOrders: s.numOrders, numOrdersFirst: s.numOrdersFirst,
+          stockNow: (e.variants ?? []).reduce((a, v) => a + (v.stock ?? 0), 0),
+        });
+      }
+    }
+    return rows;
   }
 }
 

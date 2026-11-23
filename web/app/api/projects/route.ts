@@ -40,12 +40,13 @@ export async function DELETE(req: NextRequest) {
 
 // PATCH /api/projects — rename, set interval, or rescan a source
 export async function PATCH(req: NextRequest) {
-  const { projectId, name, intervalMs, rescanUrl } = await req.json().catch(() => ({}));
+  const { projectId, name, intervalMs, rescanUrl, paused } = await req.json().catch(() => ({}));
   if (!projectId) return NextResponse.json({ error: 'Missing projectId' }, { status: 400 });
 
   try {
     if (name)       botManager.renameProject(Number(projectId), name);
     if (intervalMs) botManager.setProjectInterval(Number(projectId), Number(intervalMs));
+    if (typeof paused === 'boolean') botManager.setProjectPaused(Number(projectId), paused);
     if (rescanUrl) {
       const result = await botManager.rescanSource(Number(projectId), rescanUrl);
       return NextResponse.json({ ok: true, ...result });

@@ -2,9 +2,19 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 
-export type Variant      = { label: string; stock: number };
-export type ChangeType   = 'restock' | 'soldout' | 'change' | 'new';
-export type Change       = { label: string; oldStock: number | null; newStock: number; type: ChangeType };
+export type Variant      = { label: string; stock: number; price?: number | null };
+export type ChangeType   = 'restock' | 'soldout' | 'change' | 'new' | 'order';
+export type Change       = { label: string; oldStock: number | null; newStock: number; type: ChangeType; price?: number | null };
+
+export type VariantSales = {
+  label: string; sold: number; pending: number; out: number;
+  released: number; restocked: number; price: number | null;
+};
+export type SalesStats = {
+  sold: number; pending: number; out: number; released: number; restocked: number;
+  omset: number; priced: boolean; perVariant: VariantSales[];
+  numOrders: number | null; numOrdersFirst: number | null; price: number | null;
+};
 export type HistoryEntry = { timestamp: string; variants: Variant[] };
 
 export type Product = {
@@ -12,8 +22,9 @@ export type Product = {
   productName: string;
   variants:    Variant[];
   history:     HistoryEntry[];
-  status:      'detecting' | 'monitoring' | 'error';
+  status:      'detecting' | 'monitoring' | 'error' | 'paused';
   error?:      string | null;
+  stats?:      SalesStats;
 };
 
 export type Source = {
@@ -25,6 +36,7 @@ export type Project = {
   id:         number;
   name:       string;
   intervalMs: number;
+  paused?:    boolean;
   sources:    Source[];
   products:   Product[];
 };
@@ -47,6 +59,18 @@ export type Activity = {
   projectId:   number;
   changes:     Change[];
 };
+
+const sameStock = (a: Variant[], b: Variant[]) =>
+  a.length === b.length && a.every((x, i) => x.label === b[i].label && x.stock === b[i].stock);
+
+// Mirror of the server's history compression: runs of equal stock keep only endpoints
+function appendHistory(history: HistoryEntry[], entry: HistoryEntry): HistoryEntry[] {
+  const n = history.length;
+  if (n >= 2 && sameStock(history[n - 1].variants, entry.variants) && sameStock(history[n - 2].variants, entry.variants)) {
+    return [...history.slice(0, -1), entry];
+  }
+  return [...history.slice(-499), entry];
+}
 
 function upsertProduct(products: Product[], incoming: Product): Product[] {
   const idx = products.findIndex(p => p.productUrl === incoming.productUrl);
@@ -106,13 +130,14 @@ export function useWebSocket() {
         // ── Full state on connect
         case 'init':
           setProjects(msg.projects ?? []);
+          setActivities(msg.activities ?? []);
           break;
 
         // ── Project lifecycle
         case 'project:added':
           setProjects(prev => {
             if (prev.find(p => p.id === msg.id)) return prev;
-            return [...prev, { id: msg.id, name: msg.name, sources: msg.sources ?? [], products: [] }];
+            return [...prev, { id: msg.id, name: msg.name, intervalMs: msg.intervalMs ?? 5000, sources: msg.sources ?? [], products: [] }];
           });
           break;
 
@@ -169,6 +194,7 @@ export function useWebSocket() {
               history:     msg.history ?? [],
               status:      'monitoring',
               error:       null,
+              stats:       msg.stats,
             })
           );
           pushToast({ kind: 'info', title: 'LIVE', body: msg.productName, productUrl: msg.productUrl });
@@ -196,19 +222,32 @@ export function useWebSocket() {
               if (p.productUrl !== msg.productUrl) return p;
               return {
                 ...p,
+                status:      'monitoring' as const,
+                error:       null,
                 productName: msg.productName,
                 variants:    msg.variants,
-                history:     [...p.history.slice(-199), { timestamp: msg.timestamp, variants: msg.variants }],
+                stats:       msg.stats ?? p.stats,
+                history:     appendHistory(p.history, {
+                  timestamp: msg.timestamp,
+                  variants:  (msg.variants as Variant[]).map(v => ({ label: v.label, stock: v.stock })),
+                }),
               };
             })
           );
 
+          {
+            const feed: Change[] = [...((msg.changes as Change[]) ?? [])];
+            if (msg.orderChange) feed.push({ label: 'ORDERS', oldStock: msg.orderChange.old, newStock: msg.orderChange.new, type: 'order' });
+            if (feed.length > 0) {
+              const id = `${msg.productUrl}|${msg.timestamp}`;
+              setActivities(prev => [
+                { id, timestamp: msg.timestamp, productName: msg.productName, productUrl: msg.productUrl, projectId: msg.projectId, changes: feed },
+                ...prev.slice(0, 499),
+              ]);
+            }
+          }
+
           if ((msg.changes as Change[])?.length > 0) {
-            const id = Math.random().toString(36).slice(2);
-            setActivities(prev => [
-              { id, timestamp: msg.timestamp, productName: msg.productName, productUrl: msg.productUrl, projectId: msg.projectId, changes: msg.changes },
-              ...prev.slice(0, 79),
-            ]);
             for (const c of msg.changes as Change[]) {
               if (c.type === 'restock') pushToast({ kind: 'restock', title: '▲ RESTOCK', body: `${msg.productName} · ${c.label}  ${c.oldStock} → ${c.newStock}`, productUrl: msg.productUrl });
               if (c.type === 'soldout') pushToast({ kind: 'soldout', title: '▼ SOLD OUT', body: `${msg.productName} · ${c.label}`, productUrl: msg.productUrl });

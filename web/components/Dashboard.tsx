@@ -6,6 +6,8 @@ import { ProjectCard } from './ProjectCard';
 import { AddUrlForm } from './AddUrlForm';
 import { ToastStack } from './ToastStack';
 import { ActivityFeed } from './ActivityFeed';
+import { sumStats, Ticking } from './SalesBand';
+import { rupiahShort } from '@/lib/format';
 
 export function Dashboard() {
   const { projects, toasts, activities, connected, dismissToast } = useWebSocket();
@@ -23,6 +25,7 @@ export function Dashboard() {
   const totalProducts = projects.flatMap(p => p.products).filter(p => p.status === 'monitoring').length;
   const hasHistory    = projects.flatMap(p => p.products).some(p => p.history.length > 0);
   const isEmpty       = projects.length === 0;
+  const desk          = sumStats(projects.filter(p => !p.paused).flatMap(p => p.products));
 
   const handleAdd = async (url: string, projectId?: number) => {
     setAddError('');
@@ -72,6 +75,14 @@ export function Dashboard() {
     });
   };
 
+  const handleSetPaused = async (projectId: number, paused: boolean) => {
+    await fetch('/api/projects', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, paused }),
+    });
+  };
+
   const handleAddSource = async (projectId: number, url: string) => {
     const res = await fetch('/api/projects', {
       method: 'POST',
@@ -99,7 +110,7 @@ export function Dashboard() {
     <div className="min-h-dvh flex flex-col">
 
       {/* ── TOP BAR ── */}
-      <header className="sticky top-0 z-40 border-b border-[#1E1E1E] bg-[#0A0A0A]/95 backdrop-blur-sm">
+      <header className="sticky top-0 z-40 border-b border-[var(--line)] bg-[var(--bg)]/90 backdrop-blur-sm">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 h-14 flex items-center gap-4">
 
           <span
@@ -109,7 +120,7 @@ export function Dashboard() {
             PLUGO<span className="text-[#C8FF00]">·</span>MONITOR
           </span>
 
-          <div className="flex items-center gap-1.5 px-2 py-1 rounded border border-[#1E1E1E] bg-[#111]">
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded border border-[var(--line)] bg-[#111]">
             <span className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-[#C8FF00] animate-pulse-dot' : 'bg-[#FF3030]'}`} />
             <span
               className="text-[11px] tracking-widest"
@@ -120,14 +131,22 @@ export function Dashboard() {
           </div>
 
           {totalProducts > 0 && (
-            <span className="hidden sm:block text-xs text-[#4A4A4A]" style={{ fontFamily: 'var(--font-jetbrains)' }}>
+            <span className="hidden sm:block text-xs text-[var(--muted)]" style={{ fontFamily: 'var(--font-jetbrains)' }}>
               {projects.length} project{projects.length !== 1 ? 's' : ''} · {totalProducts} monitored
             </span>
           )}
 
+          {desk.out > 0 && (
+            <div className="hidden md:flex items-center gap-3 pl-4 border-l border-[var(--line-2)] mono text-[11px]">
+              <span className="lbl">Omset live</span>
+              <Ticking value={rupiahShort(desk.omset)} className="display tnum text-[22px] leading-none text-[var(--signal)]" />
+              <span className="text-[var(--ink-2)] tnum">{desk.sold} unit</span>
+            </div>
+          )}
+
           <div className="flex-1" />
 
-          <span className="hidden md:block text-xs text-[#4A4A4A] tabular-nums" style={{ fontFamily: 'var(--font-jetbrains)' }}>
+          <span className="hidden md:block text-xs text-[var(--muted)] tabular-nums" style={{ fontFamily: 'var(--font-jetbrains)' }}>
             {clock}
           </span>
 
@@ -198,13 +217,14 @@ export function Dashboard() {
                   onRename={handleRename}
                   onAddSource={handleAddSource}
                   onSetInterval={handleSetInterval}
+                  onSetPaused={handleSetPaused}
                   onRescan={handleRescan}
                 />
               ))}
             </div>
 
             {/* Activity feed — always visible on wide screens */}
-            <div className="hidden lg:block w-72 shrink-0">
+            <div className="hidden lg:block w-[340px] shrink-0">
               <ActivityFeed activities={activities} projects={projects} />
             </div>
           </div>

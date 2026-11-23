@@ -3,6 +3,10 @@
 import { useState, useRef, useEffect } from 'react';
 import type { Project, Source } from '@/lib/ws-hook';
 import { ProductCard } from './ProductCard';
+import { SalesBand } from './SalesBand';
+import { usePersistentState } from '@/lib/format';
+
+type SortKey = 'omset' | 'stok' | 'nama';
 
 const INTERVAL_OPTIONS = [
   { label: '5s',  ms: 5_000  },
@@ -19,6 +23,7 @@ interface Props {
   onRename:        (projectId: number, name: string) => void;
   onAddSource:     (projectId: number, url: string) => Promise<void>;
   onSetInterval:   (projectId: number, intervalMs: number) => void;
+  onSetPaused:     (projectId: number, paused: boolean) => void;
   onRescan:        (projectId: number, sourceUrl: string) => Promise<{added: number}>;
 }
 
@@ -28,8 +33,10 @@ function sourceStatus(sources: Source[]) {
   return 'watching';
 }
 
-export function ProjectCard({ project, onRemove, onRemoveProduct, onRename, onAddSource, onSetInterval, onRescan }: Props) {
-  const [expanded,      setExpanded]      = useState(true);
+export function ProjectCard({ project, onRemove, onRemoveProduct, onRename, onAddSource, onSetInterval, onSetPaused, onRescan }: Props) {
+  const [expanded,      setExpanded]      = usePersistentState(`pm:expanded:${project.id}`, true);
+  const [sortKey,       setSortKey]       = usePersistentState<SortKey>(`pm:sort:${project.id}`, 'omset');
+  const [hideIdle,      setHideIdle]      = usePersistentState(`pm:hideIdle:${project.id}`, false);
   const [renaming,      setRenaming]      = useState(false);
   const [nameVal,       setNameVal]       = useState(project.name);
   const [addingUrl,     setAddingUrl]     = useState(false);
@@ -47,6 +54,19 @@ export function ProjectCard({ project, onRemove, onRemoveProduct, onRename, onAd
   const totalStock     = liveProducts.flatMap(p => p.variants).reduce((s, v) => s + v.stock, 0);
   const soldOutVariants = liveProducts.flatMap(p => p.variants).filter(v => v.stock === 0).length;
   const status         = sourceStatus(project.sources);
+
+  // Idle = never had stock and never moved (e.g. listed but not yet released)
+  const isIdle = (p: typeof project.products[number]) =>
+    p.variants.every(v => v.stock === 0) && !(p.stats?.out) && !(p.stats?.numOrders);
+  const idleCount = project.products.filter(isIdle).length;
+  const shown = project.products
+    .filter(p => !hideIdle || !isIdle(p))
+    .slice()
+    .sort((a, b) => {
+      if (sortKey === 'nama') return a.productName.localeCompare(b.productName);
+      if (sortKey === 'stok') return b.variants.reduce((x, v) => x + v.stock, 0) - a.variants.reduce((x, v) => x + v.stock, 0);
+      return (b.stats?.omset ?? 0) - (a.stats?.omset ?? 0) || (b.stats?.numOrders ?? 0) - (a.stats?.numOrders ?? 0);
+    });
 
   const commitRename = () => {
     const trimmed = nameVal.trim();
@@ -78,15 +98,15 @@ export function ProjectCard({ project, onRemove, onRemoveProduct, onRename, onAd
   };
 
   return (
-    <div className="rounded-lg border border-[#1E1E1E] bg-[#0A0A0A] overflow-hidden">
+    <div className="rounded-lg border border-[var(--line-2)] bg-[var(--bg)] overflow-hidden">
 
       {/* ── Project header ── */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-[#1A1A1A] bg-[#0E0E0E]">
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--line)] bg-[var(--panel)]">
 
         {/* Expand toggle */}
         <button
           onClick={() => setExpanded(e => !e)}
-          className="text-[#444] hover:text-[#888] transition-colors text-xs w-4 shrink-0"
+          className="text-[var(--muted)] hover:text-[#888] transition-colors text-xs w-4 shrink-0"
         >
           {expanded ? '▼' : '▶'}
         </button>
@@ -113,13 +133,17 @@ export function ProjectCard({ project, onRemove, onRemoveProduct, onRename, onAd
         )}
 
         {/* Status badge */}
-        <StatusBadge status={status} />
+        {project.paused ? (
+          <span className="text-[9px] px-2 py-0.5 rounded bg-[#555]/10 text-[#888] border border-[#555]/30 tracking-widest" style={{ fontFamily: 'var(--font-jetbrains)' }}>
+            ❚❚ PAUSED
+          </span>
+        ) : <StatusBadge status={status} />}
 
         {/* Stats */}
         {liveProducts.length > 0 && (
           <div className="hidden sm:flex items-center gap-3 text-[10px]" style={{ fontFamily: 'var(--font-jetbrains)' }}>
-            <span className="text-[#555]">{liveProducts.length} PRODUCTS</span>
-            <span className="text-[#555]">STOCK <span className="text-[#C8FF00]">{totalStock}</span></span>
+            <span className="text-[var(--muted)]">{liveProducts.length} PRODUCTS</span>
+            <span className="text-[var(--muted)]">STOCK <span className="text-[#C8FF00]">{totalStock}</span></span>
             {soldOutVariants > 0 && <span className="text-[#FF3030]">{soldOutVariants} OOS</span>}
             {errorProducts.length > 0 && <span className="text-[#FF9500]">{errorProducts.length} ERR</span>}
           </div>
@@ -129,7 +153,7 @@ export function ProjectCard({ project, onRemove, onRemoveProduct, onRename, onAd
         <select
           value={project.intervalMs}
           onChange={e => onSetInterval(project.id, Number(e.target.value))}
-          className="text-[9px] bg-[#111] border border-[#1E1E1E] text-[#444] rounded px-1.5 py-1 hover:border-[#333] hover:text-[#888] transition-colors cursor-pointer outline-none"
+          className="text-[9px] bg-[#111] border border-[var(--line-2)] text-[var(--muted)] rounded px-1.5 py-1 hover:border-[#333] hover:text-[#888] transition-colors cursor-pointer outline-none"
           style={{ fontFamily: 'var(--font-jetbrains)' }}
           title="Poll interval"
         >
@@ -138,10 +162,20 @@ export function ProjectCard({ project, onRemove, onRemoveProduct, onRename, onAd
           ))}
         </select>
 
+        {/* Pause / resume polling */}
+        <button
+          onClick={() => onSetPaused(project.id, !project.paused)}
+          className="text-[10px] text-[var(--muted)] hover:text-[#C8FF00] transition-colors px-2 py-1 border border-[var(--line-2)] hover:border-[#C8FF00]/30 rounded"
+          style={{ fontFamily: 'var(--font-jetbrains)' }}
+          title={project.paused ? 'Resume polling' : 'Pause polling (data tetap disimpan)'}
+        >
+          {project.paused ? '▶ RESUME' : '❚❚ PAUSE'}
+        </button>
+
         {/* Add source URL */}
         <button
           onClick={() => setAddingUrl(a => !a)}
-          className="text-[10px] text-[#333] hover:text-[#C8FF00] transition-colors px-2 py-1 border border-[#1E1E1E] hover:border-[#C8FF00]/30 rounded"
+          className="text-[10px] text-[var(--muted)] hover:text-[#C8FF00] transition-colors px-2 py-1 border border-[var(--line-2)] hover:border-[#C8FF00]/30 rounded"
           style={{ fontFamily: 'var(--font-jetbrains)' }}
           title="Add collection URL"
         >
@@ -151,7 +185,7 @@ export function ProjectCard({ project, onRemove, onRemoveProduct, onRename, onAd
         {/* Remove project */}
         <button
           onClick={() => { if (confirm(`Hapus project "${project.name}" dan semua produknya?`)) onRemove(project.id); }}
-          className="text-[#2A2A2A] hover:text-[#FF3030] transition-colors text-base"
+          className="text-[var(--faint)] hover:text-[#FF3030] transition-colors text-base"
         >
           ×
         </button>
@@ -159,7 +193,7 @@ export function ProjectCard({ project, onRemove, onRemoveProduct, onRename, onAd
 
       {/* ── Add source URL input ── */}
       {addingUrl && (
-        <form onSubmit={handleAddSource} className="flex gap-2 px-4 py-2 bg-[#0C0C0C] border-b border-[#1A1A1A]">
+        <form onSubmit={handleAddSource} className="flex gap-2 px-4 py-2 bg-[#0C0C0C] border-b border-[var(--line)]">
           <input
             autoFocus
             type="url"
@@ -177,9 +211,12 @@ export function ProjectCard({ project, onRemove, onRemoveProduct, onRename, onAd
           >
             {addingLoading ? '…' : 'ADD'}
           </button>
-          <button type="button" onClick={() => setAddingUrl(false)} className="text-[#444] hover:text-white text-sm">×</button>
+          <button type="button" onClick={() => setAddingUrl(false)} className="text-[var(--muted)] hover:text-white text-sm">×</button>
         </form>
       )}
+
+      {/* ── Sales band ── */}
+      {expanded && project.products.length > 0 && <SalesBand products={project.products} />}
 
       {/* ── Source URLs list ── */}
       {expanded && project.sources.length > 0 && (
@@ -190,7 +227,7 @@ export function ProjectCard({ project, onRemove, onRemoveProduct, onRename, onAd
                 className={`text-[9px] px-2 py-0.5 rounded border ${
                   src.status === 'active'
                     ? 'border-[#C8FF00]/20 text-[#C8FF00]/60'
-                    : 'border-[#2A2A2A] text-[#333]'
+                    : 'border-[#2A2A2A] text-[var(--muted)]'
                 }`}
                 style={{ fontFamily: 'var(--font-jetbrains)' }}
               >
@@ -200,7 +237,7 @@ export function ProjectCard({ project, onRemove, onRemoveProduct, onRename, onAd
                 onClick={() => handleRescan(src.url)}
                 disabled={rescanning === src.url}
                 title="Re-scan untuk produk baru"
-                className="text-[9px] px-1.5 py-0.5 rounded border border-[#1E1E1E] text-[#333] hover:text-[#C8FF00] hover:border-[#C8FF00]/30 transition-colors disabled:opacity-40"
+                className="text-[9px] px-1.5 py-0.5 rounded border border-[var(--line-2)] text-[var(--muted)] hover:text-[#C8FF00] hover:border-[#C8FF00]/30 transition-colors disabled:opacity-40"
                 style={{ fontFamily: 'var(--font-jetbrains)' }}
               >
                 {rescanning === src.url ? '…' : '↻'}
@@ -219,7 +256,7 @@ export function ProjectCard({ project, onRemove, onRemoveProduct, onRename, onAd
       {expanded && status === 'watching' && project.products.length === 0 && (
         <div className="px-4 py-8 flex flex-col items-center gap-3">
           <div className="w-2 h-2 rounded-full bg-[#FF9500] animate-pulse" />
-          <p className="text-[11px] text-[#444] tracking-widest" style={{ fontFamily: 'var(--font-jetbrains)' }}>
+          <p className="text-[11px] text-[var(--muted)] tracking-widest" style={{ fontFamily: 'var(--font-jetbrains)' }}>
             WAITING FOR DROP — CHECKING EVERY 30s
           </p>
         </div>
@@ -227,15 +264,45 @@ export function ProjectCard({ project, onRemove, onRemoveProduct, onRename, onAd
 
       {/* ── Products grid ── */}
       {expanded && project.products.length > 0 && (
-        <div className="p-4 grid grid-cols-1 xl:grid-cols-2 gap-4">
-          {project.products.map(product => (
-            <ProductCard
-              key={product.productUrl}
-              product={product}
-              onRemove={() => onRemoveProduct(product.productUrl)}
-            />
-          ))}
-        </div>
+        <>
+          <div className="flex flex-wrap items-center gap-2 px-4 pt-4">
+            <span className="lbl">{shown.length} produk</span>
+            <span className="flex-1" />
+            <span className="lbl hidden sm:inline">Urut</span>
+            {(['omset', 'stok', 'nama'] as const).map(k => (
+              <button
+                key={k}
+                onClick={() => setSortKey(k)}
+                className={`mono text-[10px] px-2 py-1 rounded-sm uppercase tracking-[0.1em] border transition-colors ${
+                  sortKey === k ? 'border-[var(--signal)] text-[var(--signal)]' : 'border-[var(--line-2)] text-[var(--muted)] hover:text-[var(--ink)]'
+                }`}
+              >
+                {k}
+              </button>
+            ))}
+            {idleCount > 0 && (
+              <button
+                onClick={() => setHideIdle(h => !h)}
+                className={`mono text-[10px] px-2 py-1 rounded-sm uppercase tracking-[0.1em] border transition-colors ${
+                  hideIdle ? 'border-[var(--signal)] text-[var(--signal)]' : 'border-[var(--line-2)] text-[var(--muted)] hover:text-[var(--ink)]'
+                }`}
+                title="Produk yang belum pernah punya stok / penjualan"
+              >
+                {hideIdle ? `Tampilkan ${idleCount} kosong` : `Sembunyikan ${idleCount} kosong`}
+              </button>
+            )}
+          </div>
+          <div className="p-4 grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-3">
+            {shown.map((product, i) => (
+              <ProductCard
+                key={product.productUrl}
+                index={i}
+                product={product}
+                onRemove={() => onRemoveProduct(product.productUrl)}
+              />
+            ))}
+          </div>
+        </>
       )}
     </div>
   );

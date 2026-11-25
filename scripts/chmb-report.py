@@ -1,4 +1,4 @@
-"""Chambre de la Vain x Tiroceli (CHMB) drop 24/11/2026 19:00 WIB — PDF report.
+"""Chambre de la Vain x Tiroceli (CHMB) drop 24/11/2026 19:00 WIB — PDF + Excel report.
 Source: data/backup-chambredelavain.com.jsonl (bot first look 19:00:21)
 Usage: python3 chmb-report.py <out_dir>
 """
@@ -247,7 +247,62 @@ bullets = [
     ('Tidak ada produk/size yang sold out.' if not OUTS else f"{len(OUTS)} produk sempat habis."),
     f"Total {TOT['up']} unit stok sempat kembali (gagal bayar) selama dipantau; {TOT['failed']} order Plugo tidak berakhir jadi penjualan.",
 ] + ([f"Jeda data {gap_txt}: monitoring sengaja di-pause malam hari; yang terjual di jeda itu hanya diketahui totalnya."] if big_gaps else []) + [
-    f"Data s/d {fmt_t(TEND, True)} WIB, monitoring masih berjalan. Dibuat {fmt_t(generated, True)} WIB."]
+    f"Data s/d {fmt_t(TEND, True)} WIB (monitoring dihentikan). Dibuat {fmt_t(generated, True)} WIB."]
+
+# ═════════════════════════════════ EXCEL ═════════════════════════════════════
+# Same sections as the PDF (same numbers), then the raw data the bot recorded.
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+from openpyxl.utils import get_column_letter
+
+wb = Workbook(); wb.remove(wb.active)
+BOLD = Font(bold=True); THIN = Side(style='thin', color='000000'); BOX = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+GREY = PatternFill('solid', fgColor='EEEEEE')
+XL_FMT = {'rp': '"Rp"#,##0;-"Rp"#,##0', 'pct': '0.0%', 'int': '#,##0'}
+xl_val = lambda v, t: (v / 100 if (t == 'pct' and isinstance(v, (int, float))) else v)
+naive = lambda t: t.replace(tzinfo=None) if t else None
+
+for n, sec in enumerate(SECTIONS):
+    ws = wb.create_sheet(f"{n}. {sec['title'].split('. ', 1)[-1]}"[:31])
+    ws.cell(row=1, column=1, value=sec['title']).font = Font(bold=True, size=12)
+    for j, (h, _, w) in enumerate(sec['cols'], 1):
+        c = ws.cell(row=2, column=j, value=h); c.font = BOLD; c.border = BOX; c.alignment = Alignment(wrap_text=True, vertical='center')
+        ws.column_dimensions[get_column_letter(j)].width = max(10, w * 0.7)
+    body = sec['rows'] + ([sec['total']] if sec['total'] else [])
+    for i, r in enumerate(body):
+        for j, ((_, t, _), v) in enumerate(zip(sec['cols'], r), 1):
+            c = ws.cell(row=3 + i, column=j, value=xl_val(v, t)); c.border = BOX
+            if t in XL_FMT and isinstance(v, (int, float)): c.number_format = XL_FMT[t]
+            if (sec['total'] and i == len(body) - 1) or i in sec.get('bold', ()): c.font = BOLD
+            if i in sec.get('bold', ()): c.fill = GREY
+    row = 3 + len(body) + 1
+    notes = ([sec['note']] if sec['note'] else []) + (bullets if sec['key'] == 'gerak' else [])
+    for note in notes:
+        c = ws.cell(row=row, column=1, value=note); c.alignment = Alignment(wrap_text=True, vertical='top')
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=max(len(sec['cols']), 5))
+        ws.row_dimensions[row].height = 15 * (1 + len(note) // 110); row += 1
+    ws.freeze_panes = 'A3'
+
+def raw_sheet(title, headers, rows, widths, fmts=None):
+    ws = wb.create_sheet(title); ws.append(headers)
+    for c in ws[1]: c.font = BOLD; c.alignment = Alignment(wrap_text=True)
+    for r in rows: ws.append(r)
+    for i, w in enumerate(widths, 1): ws.column_dimensions[get_column_letter(i)].width = w
+    for col, f in (fmts or {}).items():
+        for cell in ws[col][1:]: cell.number_format = f
+    ws.freeze_panes = 'A2'
+
+TS = {'A': 'dd/mm/yyyy hh:mm:ss'}
+raw_sheet('Data - Per Size', ['Produk', 'Size', 'Stok awal (bacaan pertama)', 'Stok tertinggi', 'Stok akhir', 'Total turun', 'Total naik'],
+      [[x['name'], x['size'], x['first'], x['max'], x['last'], x['down'], x['up']] for x in per_size], [48, 10, 14, 13, 11, 12, 12])
+raw_sheet('Data - Pergerakan Stok', ['Waktu (WIB)', 'Produk', 'Size', 'Stok lama', 'Stok baru', 'Delta', 'Catatan'],
+      [[naive(c['t']), c['name'], c['size'], c['old'], c['new'], c['delta'], c['note']] for c in changes], [20, 48, 10, 10, 10, 8, 28], TS)
+raw_sheet('Data - Order Plugo', ['Waktu (WIB)', 'Produk', 'Order lama', 'Order baru', 'Delta', 'Catatan'],
+      [[naive(c['t']), c['name'], c['old'], c['new'], c['delta'], c['note']] for c in order_changes], [20, 48, 11, 11, 8, 28], TS)
+raw_sheet('Data - Jeda', ['Mulai (data terakhir)', 'Selesai (data berikutnya)', 'Durasi (menit)'],
+      [[naive(a), naive(b), round((b - a).total_seconds() / 60, 1)] for a, b in gaps], [22, 22, 14], {'A': TS['A'], 'B': TS['A']})
+xlsx_path = os.path.join(OUT, 'Data Chambre de la Vain x Tiroceli - Drop 24 Nov 2026.xlsx')
+wb.save(xlsx_path)
 
 # ═════════════════════════════════ PDF ═══════════════════════════════════════
 from reportlab.lib.pagesizes import A4
@@ -301,4 +356,4 @@ SimpleDocTemplate(pdf_path, pagesize=A4, leftMargin=14*mm, rightMargin=14*mm, to
 
 print('OK', T0, TEND, f'gaps {gap_min / 60:.1f}h', TOT)
 for s in sold_rows: print(f"  {s['name'][:40]:40} init {s['init_est']:4} last {s['stock_last']:3} sold {s['sold']:4} orders {s['orders_first']}->{s['orders_last']} omset {rp(s['omset'])}")
-print(pdf_path)
+print(xlsx_path, pdf_path, sep='\n')

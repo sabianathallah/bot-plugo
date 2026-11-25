@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 
 export type Variant      = { label: string; stock: number; price?: number | null };
-export type ChangeType   = 'restock' | 'soldout' | 'change' | 'new' | 'order';
+export type ChangeType   = 'restock' | 'soldout' | 'change' | 'new' | 'order' | 'gap';
 export type Change       = { label: string; oldStock: number | null; newStock: number; type: ChangeType; price?: number | null };
 
 export type VariantSales = {
@@ -14,6 +14,7 @@ export type SalesStats = {
   sold: number; pending: number; out: number; released: number; restocked: number;
   omset: number; priced: boolean; perVariant: VariantSales[];
   numOrders: number | null; numOrdersFirst: number | null; price: number | null;
+  soldTracked: number; soldInitial: number;
 };
 export type HistoryEntry = { timestamp: string; variants: Variant[] };
 

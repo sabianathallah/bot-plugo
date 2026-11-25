@@ -184,7 +184,7 @@ const stmts = {
       SELECT ${which}(recorded_at) FROM stock_snapshots WHERE product_id = @pid)
   `),
   changesForProduct: db.prepare(`
-    SELECT occurred_at, variant, old_stock, new_stock FROM change_events
+    SELECT occurred_at, variant, old_stock, new_stock, change_type FROM change_events
     WHERE product_id = ? ORDER BY id ASC
   `),
   changeTotals: db.prepare(`
@@ -374,6 +374,12 @@ export function getChangeTotals(url) {
   const row = stmts.getProductId.get(url);
   if (!row) return [];
   return stmts.changeTotals.all(row.id);
+}
+
+/** Stock per variant at the latest saved snapshot ([] if none). */
+export function getLastSnapshot(url) {
+  const row = stmts.getProductId.get(url);
+  return row ? lastSnap.all({ pid: row.id }) : [];
 }
 
 export function getProductChanges(url) {

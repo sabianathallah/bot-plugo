@@ -8,7 +8,7 @@ import {
   upsertSource, updateSourceStatus, getSourcesByProject, getAllSources, deleteSource,
   saveProduct, updateProductName, deleteProduct,
   getAllProducts, saveSnapshot, saveChanges, getExportData,
-  getCompressedHistory, getProductChanges, getProductMeta, saveProductMeta, saveOrderEvent,
+  getCompressedHistory, getProductChanges, getLastSnapshot, getProductMeta, saveProductMeta, saveOrderEvent,
   getRecentActivity, getExportChanges, getExportOrders,
 } from './db.js';
 import { SalesTracker } from './sales.js';
@@ -288,6 +288,17 @@ class BotManager extends EventEmitter {
 
       updateProductName(productUrl, initial.productName);
       const now = new Date().toISOString();
+      // Resume after a pause/restart: record what moved while we were not polling,
+      // otherwise the first poll silently becomes the new baseline.
+      const before = new Map(getLastSnapshot(productUrl).map(r => [r.variant, r.stock]));
+      const gap = before.size === 0 ? [] : initial.variants
+        .filter(v => before.has(v.label) && before.get(v.label) !== v.stock)
+        .map(v => ({ label: v.label, oldStock: before.get(v.label), newStock: v.stock, type: 'gap' }));
+      if (gap.length) {
+        saveChanges(productUrl, gap, now);
+        for (const c of gap) entry.sales.applyGap(c.label, c.oldStock, c.newStock);
+        console.log(`[bot] ${initial.productName}: ${gap.length} variant(s) moved during the gap`);
+      }
       saveSnapshot(productUrl, initial.variants, now);
       pushHistory(entry.history, now, initial.variants);
 
@@ -437,7 +448,10 @@ class BotManager extends EventEmitter {
     this._urlToProject.set(url, projectId);
     const meta  = getProductMeta(url) ?? { prices: {}, numOrders: null, numOrdersFirst: null };
     const sales = new SalesTracker();
-    for (const c of getProductChanges(url)) sales.apply(c.variant, c.old_stock, c.new_stock, c.occurred_at);
+    for (const c of getProductChanges(url)) {
+      if (c.change_type === 'gap') sales.applyGap(c.variant, c.old_stock, c.new_stock);
+      else sales.apply(c.variant, c.old_stock, c.new_stock, c.occurred_at);
+    }
     project.products.set(url, {
       productName:    name,
       variants:       [],
@@ -473,11 +487,21 @@ class BotManager extends EventEmitter {
   }
 
   _stats(e) {
+    const s     = e.sales.summary(e.prices ?? {});
+    const price = Object.values(e.prices ?? {})[0] ?? null;
+    // Plugo orders already on the product at the bot's first look were holding stock
+    // before we saw it: count them as sold (same as the PDF report: stock + orders).
+    // Ones that fail later return stock, which the tracker already subtracts.
+    const soldInitial = e.numOrdersFirst ?? 0;
     return {
-      ...e.sales.summary(e.prices ?? {}),
+      ...s,
+      soldTracked:    s.sold,
+      soldInitial,
+      sold:           s.sold + soldInitial,
+      omset:          s.omset + soldInitial * (price ?? 0),
       numOrders:      e.numOrders ?? null,
       numOrdersFirst: e.numOrdersFirst ?? null,
-      price:          Object.values(e.prices ?? {})[0] ?? null,
+      price,
     };
   }
 

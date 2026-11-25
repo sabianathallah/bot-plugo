@@ -47,6 +47,19 @@ export class SalesTracker {
     if (v.holds.length && v.holds[0].t < cutoff) v.holds = v.holds.filter(h => h.t >= cutoff);
   }
 
+  /**
+   * Movement that happened while we were not polling (bot paused / offline).
+   * Only the net difference is known: a drop counts straight away as sold
+   * (no hold: it is already older than we can judge), a rise counts as units
+   * that came back (unpaid checkouts), the same net logic the PDF report uses.
+   */
+  applyGap(label, oldStock, newStock) {
+    if (oldStock == null || newStock == null || oldStock === newStock) return;
+    const v = this._v(label);
+    if (newStock < oldStock) v.out += oldStock - newStock;
+    else v.released += newStock - oldStock;
+  }
+
   summary(prices = {}, now = Date.now()) {
     let sold = 0, pending = 0, out = 0, released = 0, restocked = 0, omset = 0, priced = true;
     const perVariant = [];

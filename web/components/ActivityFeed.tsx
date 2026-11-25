@@ -33,6 +33,13 @@ function describe(c: Change) {
   }
   const d = c.newStock - c.oldStock;
   const value = c.price != null ? rupiahShort(Math.abs(d) * c.price) : null;
+  if (c.type === 'gap') {
+    // net movement while the bot was paused/offline: exact time unknown
+    return {
+      icon: d < 0 ? '▼' : '▲', color: d < 0 ? 'var(--down)' : 'var(--up)', tag: 'JEDA',
+      delta: d < 0 ? String(d) : `+${d}`, detail: `${c.oldStock} → ${c.newStock} selama jeda`, value,
+    };
+  }
   if (d < 0) {
     return {
       icon: '▼', color: c.newStock === 0 ? 'var(--out)' : 'var(--down)',

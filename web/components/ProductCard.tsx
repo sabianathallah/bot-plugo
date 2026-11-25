@@ -162,6 +162,13 @@ function SalesTable({ product }: { product: Product }) {
               <td className="py-2 px-1 text-right text-[var(--ink)] whitespace-nowrap">{v.price == null ? '—' : rupiahShort(v.sold * v.price)}</td>
             </tr>
           ))}
+          {s.soldInitial > 0 && (
+            <tr className="border-t border-[var(--line)]" title="Order Plugo yang sudah ada saat bot pertama membaca produk; size tidak diketahui">
+              <td className="py-2 px-1 text-[var(--muted)]" colSpan={4}>Order sebelum dipantau (size ?)</td>
+              <td className="py-2 px-1 text-right text-[var(--signal)]">{s.soldInitial}</td>
+              <td className="py-2 px-1 text-right text-[var(--ink)] whitespace-nowrap">{s.price == null ? '—' : rupiahShort(s.soldInitial * s.price)}</td>
+            </tr>
+          )}
           <tr className="border-t border-[var(--line-2)]">
             <td className="py-2 px-1 lbl">Total</td>
             <td className="py-2 px-1 text-right text-[var(--down)]">{s.out}</td>

@@ -77,7 +77,7 @@ export function SalesBand({ products }: { products: Product[] }) {
 
         {/* Movement cells */}
         <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-px bg-[var(--line)] border-t lg:border-t-0 lg:border-l border-[var(--line)]">
-          <Cell label="Terjual" value={t.sold.toLocaleString('id-ID')} color="var(--signal)" hint="Checkout yang tidak kembali ke stok" />
+          <Cell label="Terjual" value={t.sold.toLocaleString('id-ID')} color="var(--signal)" hint="Checkout yang tidak kembali ke stok + order yang sudah ada saat bot pertama membaca" />
           <Cell label="Pending" value={t.pending.toLocaleString('id-ID')} color="var(--down)" hint="Checkout < 25 menit — bisa masih lepas" />
           <Cell label="Checkout ▼" value={t.out.toLocaleString('id-ID')} color="var(--down)" hint="Total unit stok turun" />
           <Cell label="Balik ▲" value={t.released.toLocaleString('id-ID')} color="var(--up)" hint="Checkout tidak dibayar yang lepas lagi" />

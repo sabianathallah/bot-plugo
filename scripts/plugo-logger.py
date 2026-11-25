@@ -50,7 +50,12 @@ with cf.ThreadPoolExecutor(8) as ex:
         start = time.time()
         t = datetime.datetime.now().astimezone().isoformat(timespec='seconds')
         try:
-            lst = json.loads(get(f'https://api.plugo.world/v1/shop/{SHOP}/products?limit=100&offset=0'))['data']
+            lst, off = [], 0
+            while True:   # paginate: drops can have > 100 products
+                page = json.loads(get(f'https://api.plugo.world/v1/shop/{SHOP}/products?limit=100&offset={off}'))['data'] or []
+                lst += page; off += 100
+                if len(page) < 100: break
+            if not lst: write({'t': t, 'event': 'empty'})   # shop has no products yet (pre-drop) — heartbeat only
             if fails >= 6: notify(f'Koneksi pulih — {DOMAIN} tercatat lagi')
             fails = 0
             futs = {p['id']: (p, ex.submit(product, p['id'])) for p in lst}
